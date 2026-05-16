@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useRef } from "react";
+import { supabase } from "./supabase";
  
 const T = {
   navy: "#071A2C",
@@ -51,6 +52,7 @@ const LENDERS = [
   { name: "Moula", types: ["Working Capital"], risk: ["low", "medium"], maxAmount: 250000, industries: "all" },
   { name: "OnDeck", types: ["Working Capital", "Equipment Finance"], risk: ["medium"], maxAmount: 300000, industries: "all" },
 ];
+
 
 const fmt = (n) => new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 }).format(n);
 const riskColor = (r) => ({ low: T.teal, medium: T.amber, high: T.red }[r] || T.muted);
@@ -112,7 +114,7 @@ const NAV = [
   { id: "admin", icon: "ti-settings", label: "Admin & Billing" },
 ];
  
-const Sidebar = ({ active, setActive }) => (
+const Sidebar = ({ active, setActive, user, onSignOut }) => (
   <div style={{ width: 220, background: T.navyMid, borderRight: `0.5px solid ${T.navyBorder}`, display: "flex", flexDirection: "column", flexShrink: 0, height: "100vh", position: "sticky", top: 0 }}>
     <div style={{ padding: "20px 20px 16px", borderBottom: `0.5px solid ${T.navyBorder}` }}>
       <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 18, letterSpacing: -0.5 }}>Swift<span style={{ color: T.teal }}>lend</span></div>
@@ -127,13 +129,17 @@ const Sidebar = ({ active, setActive }) => (
       ))}
     </nav>
     <div style={{ padding: "14px 16px", borderTop: `0.5px solid ${T.navyBorder}` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", background: T.tealDim, border: `1px solid ${T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: T.teal }}>TC</div>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 500 }}>Thomas Cason</div>
-          <div style={{ fontSize: 10, color: T.muted }}>Broker · Brisbane QLD</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: "50%", background: T.tealDim, border: `1px solid ${T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: T.teal, flexShrink: 0 }}>{user?.initials}</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user?.name}</div>
+          <div style={{ fontSize: 10, color: T.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user?.email}</div>
         </div>
       </div>
+      <button onClick={onSignOut} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, border: `0.5px solid ${T.navyBorder}`, background: "transparent", color: T.muted, fontSize: 12, fontFamily: FONT_BODY, cursor: "pointer" }}>
+        <i className="ti ti-logout" style={{ fontSize: 14 }} />
+        Sign out
+      </button>
     </div>
   </div>
 );
@@ -695,11 +701,230 @@ const AdminView = () => (
   </div>
 );
  
+const LoginView = ({ onLogin }) => {
+  const [mode, setMode] = useState("signin"); // "signin" | "signup" | "reset"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const switchMode = (next) => {
+    setMode(next);
+    setError("");
+    setMessage("");
+    setPassword("");
+    setConfirmPassword("");
+  };
+
+  const handleSignIn = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (authError) {
+      setError(authError.message);
+      setLoading(false);
+      return;
+    }
+    const sbUser = data.user;
+    const displayName = sbUser.user_metadata?.full_name || sbUser.email.split("@")[0];
+    const words = displayName.trim().split(" ");
+    const userInitials = words.length >= 2
+      ? (words[0][0] + words[words.length - 1][0]).toUpperCase()
+      : displayName.slice(0, 2).toUpperCase();
+    onLogin({ email: sbUser.email, name: displayName, role: sbUser.user_metadata?.role || "Broker", initials: userInitials, id: sbUser.id });
+    setLoading(false);
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (password !== confirmPassword) { setError("Passwords do not match."); return; }
+    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    setLoading(true);
+    const { error: authError } = await supabase.auth.signUp({ email: email.trim(), password });
+    if (authError) {
+      setError(authError.message);
+    } else {
+      setMessage("Account created. Check your email to confirm before signing in.");
+      setMode("signin");
+    }
+    setLoading(false);
+  };
+
+  const handleReset = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const { error: authError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin,
+    });
+    if (authError) {
+      setError(authError.message);
+    } else {
+      setMessage("Password reset email sent. Check your inbox.");
+    }
+    setLoading(false);
+  };
+
+  const fieldStyle = {
+    width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8,
+    padding: "11px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", boxSizing: "border-box",
+  };
+  const labelStyle = { fontSize: 11, color: T.muted, display: "block", marginBottom: 7, letterSpacing: "0.05em" };
+
+  const headings = {
+    signin: { title: "Welcome back", sub: "Sign in to your broker portal" },
+    signup: { title: "Create account", sub: "Get started with Swiftlend" },
+    reset:  { title: "Reset password", sub: "We'll send a reset link to your email" },
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_BODY, position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,180,216,0.13) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(0,180,216,0.15), transparent)" }} />
+
+      <div style={{ width: "100%", maxWidth: 420, padding: "0 24px", position: "relative", zIndex: 1 }}>
+        <div style={{ textAlign: "center", marginBottom: 44 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 36, letterSpacing: -1.5, marginBottom: 10 }}>
+            Swift<span style={{ color: T.teal }}>lend</span>
+          </div>
+          <div style={{ fontSize: 11, color: T.muted, letterSpacing: "0.12em" }}>AI CREDIT PLATFORM</div>
+          <div style={{ width: 40, height: 2, background: `linear-gradient(90deg, transparent, ${T.teal}, transparent)`, margin: "16px auto 0" }} />
+        </div>
+
+        <div style={{ background: T.navyMid, border: `0.5px solid ${T.navyBorder}`, borderRadius: 16, padding: "36px 32px", boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 700, marginBottom: 4 }}>{headings[mode].title}</div>
+          <div style={{ fontSize: 13, color: T.muted, marginBottom: 32 }}>{headings[mode].sub}</div>
+
+          {message && (
+            <div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: T.teal, marginBottom: 20 }}>
+              {message}
+            </div>
+          )}
+
+          <form onSubmit={mode === "signin" ? handleSignIn : mode === "signup" ? handleSignUp : handleReset} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <div>
+              <label style={labelStyle}>EMAIL ADDRESS</label>
+              <input
+                type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="you@swiftlend.com.au" required autoFocus
+                style={fieldStyle}
+                onFocus={e => e.target.style.borderColor = T.teal}
+                onBlur={e => e.target.style.borderColor = T.navyBorder}
+              />
+            </div>
+
+            {mode !== "reset" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>PASSWORD</label>
+                  {mode === "signin" && (
+                    <button type="button" onClick={() => switchMode("reset")} style={{ background: "none", border: "none", color: T.teal, fontSize: 11, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  placeholder="••••••••••" required minLength={6}
+                  style={fieldStyle}
+                  onFocus={e => e.target.style.borderColor = T.teal}
+                  onBlur={e => e.target.style.borderColor = T.navyBorder}
+                />
+              </div>
+            )}
+
+            {mode === "signup" && (
+              <div>
+                <label style={labelStyle}>CONFIRM PASSWORD</label>
+                <input
+                  type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••••" required minLength={6}
+                  style={fieldStyle}
+                  onFocus={e => e.target.style.borderColor = T.teal}
+                  onBlur={e => e.target.style.borderColor = T.navyBorder}
+                />
+              </div>
+            )}
+
+            {error && (
+              <div style={{ background: "rgba(255,107,107,0.1)", border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: T.red }}>
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit" disabled={loading}
+              style={{ width: "100%", background: T.teal, color: T.navy, border: "none", borderRadius: 8, padding: "13px 0", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.8 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 }}
+            >
+              {loading ? <><Spinner /> {mode === "signin" ? "Signing in…" : mode === "signup" ? "Creating account…" : "Sending reset email…"}</> :
+                mode === "signin" ? "Sign in →" : mode === "signup" ? "Create account →" : "Send reset email →"}
+            </button>
+          </form>
+
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: `0.5px solid ${T.navyBorder}`, textAlign: "center" }}>
+            {mode === "signin" && (
+              <span style={{ fontSize: 13, color: T.muted }}>
+                Don't have an account?{" "}
+                <button type="button" onClick={() => switchMode("signup")} style={{ background: "none", border: "none", color: T.teal, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0, fontWeight: 500 }}>
+                  Create account
+                </button>
+              </span>
+            )}
+            {(mode === "signup" || mode === "reset") && (
+              <button type="button" onClick={() => switchMode("signin")} style={{ background: "none", border: "none", color: T.muted, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>
+                ← Back to sign in
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(255,255,255,0.2)" }}>
+          Swiftlend · AI-powered commercial lending · Australia
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [active, setActive] = useState("dashboard");
   const [selectedDeal, setSelectedDeal] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) setUser(buildUser(session.user));
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ? buildUser(session.user) : null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const buildUser = (sbUser) => {
+    const displayName = sbUser.user_metadata?.full_name || sbUser.email.split("@")[0];
+    const words = displayName.trim().split(" ");
+    const userInitials = words.length >= 2
+      ? (words[0][0] + words[words.length - 1][0]).toUpperCase()
+      : displayName.slice(0, 2).toUpperCase();
+    return { email: sbUser.email, name: displayName, role: sbUser.user_metadata?.role || "Broker", initials: userInitials, id: sbUser.id };
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setActive("dashboard");
+    setSelectedDeal(null);
+  };
+
   const PAGE_TITLES = {
-    dashboard: ["Dashboard", "Good morning, Thomas — welcome to Swiftlend"],
+    dashboard: ["Dashboard", `Good morning, ${user?.name || ""} — welcome to Swiftlend`],
     pipeline: ["Deal Pipeline", `${DEALS.length} active applications`],
     intake: ["New Application", "Submit and AI-assess a new finance application"],
     risk: ["Risk Review", "AI-powered deal assessment with live chat"],
@@ -733,13 +958,21 @@ export default function App() {
         input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.25); }
         select option { background: #0D2640; }
       `}</style>
-      <div style={{ display: "flex", height: "100vh", background: "#071A2C", overflow: "hidden" }}>
-        <Sidebar active={active} setActive={(v) => { setActive(v); if (v !== "risk") setSelectedDeal(null); }} />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <Topbar title={title} subtitle={subtitle} />
-          <div style={{ flex: 1, overflowY: active === "risk" ? "hidden" : "auto" }}>{renderView()}</div>
+      {authLoading ? (
+        <div style={{ minHeight: "100vh", background: T.navy, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Spinner />
         </div>
-      </div>
+      ) : !user ? (
+        <LoginView onLogin={setUser} />
+      ) : (
+        <div style={{ display: "flex", height: "100vh", background: "#071A2C", overflow: "hidden" }}>
+          <Sidebar active={active} setActive={(v) => { setActive(v); if (v !== "risk") setSelectedDeal(null); }} user={user} onSignOut={handleSignOut} />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <Topbar title={title} subtitle={subtitle} />
+            <div style={{ flex: 1, overflowY: active === "risk" ? "hidden" : "auto" }}>{renderView()}</div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
