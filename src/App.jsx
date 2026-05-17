@@ -290,6 +290,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [aiResult, setAiResult] = useState(null);
   const [files, setFiles] = useState([]);
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -309,7 +310,9 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
 
   const saveDeal = async () => {
     setSaving(true);
-    await supabase.from("deals").insert({
+    setSaveError(null);
+    console.log("Saving deal, user:", user?.id, "form:", form.company);
+    const { data, error } = await supabase.from("deals").insert({
       user_id: user.id,
       applicant_name: form.company,
       loan_amount: Number(form.amount),
@@ -322,7 +325,14 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       notes: form.notes || null,
       analyst: user.name,
       documents: files.length > 0 ? files : null,
-    });
+    }).select();
+    console.log("Insert result:", { data, error });
+    if (error) {
+      console.error("Supabase insert error:", error);
+      setSaveError(error.message);
+      setSaving(false);
+      return;
+    }
     await onDealSaved();
     setSaving(false);
     setStep(1);
@@ -395,8 +405,13 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
                 <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.6, marginBottom: 14 }}>{aiResult.summary}</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{aiResult.flags?.map((f, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.mutedMid }}>▲ {f}</div>))}</div>
               </div>
+              {saveError && (
+                <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: T.red }}>
+                  Save failed: {saveError}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => { setStep(1); setAiResult(null); setFiles([]); setForm({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
+                <button onClick={() => { setStep(1); setAiResult(null); setFiles([]); setSaveError(null); setForm({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
                 <button onClick={saveDeal} disabled={saving} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1, display: "flex", alignItems: "center", gap: 8 }}>
                   {saving ? <><Spinner /> Saving…</> : "Save & View in Pipeline →"}
                 </button>
