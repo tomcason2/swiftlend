@@ -1,6 +1,6 @@
-﻿import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase";
- 
+
 const T = {
   navy: "#071A2C",
   navyMid: "#0D2640",
@@ -19,20 +19,26 @@ const T = {
   mutedMid: "rgba(255,255,255,0.62)",
   white: "#ffffff",
 };
- 
+
 const FONT_DISPLAY = "'Syne', sans-serif";
 const FONT_BODY = "'DM Sans', sans-serif";
- 
-const DEALS = [
-  { id: "D001", company: "Apex Transport Pty Ltd", type: "Equipment Finance", amount: 240000, status: "approved", risk: "low", riskScore: 18, submitted: "2026-05-07", analyst: "Tom C.", industry: "Transport", abn: "51 824 753 556", notes: "Strong cash flow, established 8 years.", documents: ["financials_2025.pdf", "bank_statements_6mo.pdf", "equipment_quote.pdf"] },
-  { id: "D002", company: "Greenfield Constructions", type: "Commercial Loan", amount: 1200000, status: "review", risk: "medium", riskScore: 54, submitted: "2026-05-06", analyst: "James L.", industry: "Construction", abn: "32 445 112 008", notes: "Revenue spike in Q3 warrants deeper review.", documents: ["financials_2025.pdf", "tax_return_2024.pdf"] },
-  { id: "D003", company: "Nova Retail Group", type: "Working Capital", amount: 85000, status: "flagged", risk: "high", riskScore: 81, submitted: "2026-05-05", analyst: "Tom C.", industry: "Retail", abn: "78 234 901 447", notes: "3 irregular cash flow periods detected.", documents: ["financials_2025.pdf", "bank_statements_6mo.pdf"] },
-  { id: "D004", company: "BlueSky Solar Pty Ltd", type: "Equipment Finance", amount: 410000, status: "pending", risk: "low", riskScore: 22, submitted: "2026-05-08", analyst: "Unassigned", industry: "Energy", abn: "44 901 234 789", notes: "New application — awaiting AI assessment.", documents: [] },
-  { id: "D005", company: "Harbour View Hospitality", type: "Commercial Loan", amount: 650000, status: "pending", risk: "medium", riskScore: 47, submitted: "2026-05-08", analyst: "James L.", industry: "Hospitality", abn: "91 678 345 012", notes: "Seasonal revenue pattern — needs context.", documents: ["financials_2025.pdf"] },
-  { id: "D006", company: "PrecisionMed Labs", type: "Equipment Finance", amount: 1800000, status: "approved", risk: "low", riskScore: 14, submitted: "2026-05-04", analyst: "Tom C.", industry: "Healthcare", abn: "23 567 890 123", notes: "Excellent financials, long-term government contracts.", documents: ["financials_2025.pdf", "tax_return_2024.pdf", "contracts.pdf"] },
-  { id: "D007", company: "FastPrint Solutions", type: "Working Capital", amount: 35000, status: "declined", risk: "high", riskScore: 88, submitted: "2026-05-03", analyst: "James L.", industry: "Manufacturing", abn: "67 123 456 789", notes: "Declined — excessive debt-to-income ratio.", documents: ["financials_2025.pdf"] },
-];
- 
+
+const normalizeRow = (row) => ({
+  id: row.id,
+  company: row.applicant_name,
+  type: row.loan_type,
+  amount: row.loan_amount,
+  status: row.status,
+  risk: row.risk_level || "low",
+  riskScore: row.risk_score || 0,
+  submitted: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
+  analyst: row.analyst || "Unassigned",
+  industry: row.industry || "",
+  abn: row.abn || "",
+  notes: row.notes || "",
+  documents: row.documents || [],
+});
+
 const AUDIT_LOGS = [
   { id: 1, deal: "D001", action: "Status changed to Approved", user: "Tom C.", time: "2026-05-07 14:32", note: "All checks passed. Strong DTI ratio." },
   { id: 2, deal: "D003", action: "Risk flag raised", user: "Swiftlend AI", time: "2026-05-05 09:18", note: "Irregular cash flow detected in months 3, 5, 6." },
@@ -41,7 +47,7 @@ const AUDIT_LOGS = [
   { id: 5, deal: "D006", action: "Status changed to Approved", user: "Tom C.", time: "2026-05-04 10:20", note: "Government contracts provide strong security." },
   { id: 6, deal: "D004", action: "Application received", user: "System", time: "2026-05-08 08:03", note: "Auto-ingested via broker portal." },
 ];
- 
+
 const LENDERS = [
   { name: "Pepper Money", types: ["Equipment Finance", "Commercial Loan"], risk: ["medium", "high"], maxAmount: 2000000, industries: "all" },
   { name: "Liberty Financial", types: ["Commercial Loan", "Working Capital"], risk: ["low", "medium"], maxAmount: 1000000, industries: "all" },
@@ -53,14 +59,13 @@ const LENDERS = [
   { name: "OnDeck", types: ["Working Capital", "Equipment Finance"], risk: ["medium"], maxAmount: 300000, industries: "all" },
 ];
 
-
 const fmt = (n) => new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 }).format(n);
 const riskColor = (r) => ({ low: T.teal, medium: T.amber, high: T.red }[r] || T.muted);
 const riskBg = (r) => ({ low: T.tealDim, medium: T.amberDim, high: T.redDim }[r] || "transparent");
 const statusColor = (s) => ({ approved: T.teal, review: T.amber, flagged: T.red, pending: T.mutedMid, declined: T.red }[s] || T.muted);
 const statusBg = (s) => ({ approved: T.tealDim, review: T.amberDim, flagged: T.redDim, pending: "rgba(255,255,255,0.06)", declined: T.redDim }[s] || "transparent");
 const initials = (name) => name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
- 
+
 async function callClaude(messages, systemPrompt) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -75,16 +80,16 @@ async function callClaude(messages, systemPrompt) {
       max_tokens: 1000,
       system: systemPrompt,
       messages,
-    }), 
+    }),
   });
   const data = await res.json();
   return data.content?.map(b => b.text || "").join("") || "";
 }
- 
+
 const Badge = ({ label, color, bg }) => (
   <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 9px", borderRadius: 5, background: bg, color, textTransform: "capitalize", whiteSpace: "nowrap" }}>{label}</span>
 );
- 
+
 const RiskMeter = ({ score }) => {
   const color = score < 35 ? T.teal : score < 65 ? T.amber : T.red;
   return (
@@ -99,11 +104,11 @@ const RiskMeter = ({ score }) => {
     </div>
   );
 };
- 
+
 const Spinner = () => (
   <div style={{ display: "inline-block", width: 14, height: 14, border: `2px solid rgba(0,180,216,0.22)`, borderTopColor: T.teal, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
 );
- 
+
 const NAV = [
   { id: "dashboard", icon: "ti-layout-dashboard", label: "Dashboard" },
   { id: "pipeline", icon: "ti-git-branch", label: "Pipeline" },
@@ -113,7 +118,7 @@ const NAV = [
   { id: "audit", icon: "ti-clipboard-list", label: "Audit Trail" },
   { id: "admin", icon: "ti-settings", label: "Admin & Billing" },
 ];
- 
+
 const Sidebar = ({ active, setActive, user, onSignOut }) => (
   <div style={{ width: 220, background: T.navyMid, borderRight: `0.5px solid ${T.navyBorder}`, display: "flex", flexDirection: "column", flexShrink: 0, height: "100vh", position: "sticky", top: 0 }}>
     <div style={{ padding: "20px 20px 16px", borderBottom: `0.5px solid ${T.navyBorder}` }}>
@@ -143,7 +148,7 @@ const Sidebar = ({ active, setActive, user, onSignOut }) => (
     </div>
   </div>
 );
- 
+
 const Topbar = ({ title, subtitle }) => (
   <div style={{ padding: "18px 32px", borderBottom: `0.5px solid ${T.navyBorder}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
     <div>
@@ -157,12 +162,12 @@ const Topbar = ({ title, subtitle }) => (
     </div>
   </div>
 );
- 
-const DashboardView = ({ setActive, setSelectedDeal }) => {
-  const total = DEALS.reduce((a, d) => a + d.amount, 0);
-  const approved = DEALS.filter(d => d.status === "approved").length;
-  const flagged = DEALS.filter(d => d.status === "flagged" || d.risk === "high").length;
-  const pending = DEALS.filter(d => d.status === "pending").length;
+
+const DashboardView = ({ deals, setActive, setSelectedDeal }) => {
+  const total = deals.reduce((a, d) => a + d.amount, 0);
+  const approved = deals.filter(d => d.status === "approved").length;
+  const flagged = deals.filter(d => d.status === "flagged" || d.risk === "high").length;
+  const pending = deals.filter(d => d.status === "pending").length;
   const statCard = (label, value, sub, color = T.white) => (
     <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 12, padding: "18px 20px" }}>
       <div style={{ fontSize: 11, color: T.muted, marginBottom: 8, letterSpacing: "0.04em" }}>{label}</div>
@@ -173,7 +178,7 @@ const DashboardView = ({ setActive, setSelectedDeal }) => {
   return (
     <div style={{ padding: 32, display: "flex", flexDirection: "column", gap: 28 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        {statCard("Total Pipeline", fmt(total), `${DEALS.length} active deals`)}
+        {statCard("Total Pipeline", fmt(total), `${deals.length} active deals`)}
         {statCard("Approved This Week", approved, "deals approved", T.teal)}
         {statCard("Flagged / High Risk", flagged, "requires attention", T.red)}
         {statCard("Pending Review", pending, "awaiting assessment", T.amber)}
@@ -181,50 +186,60 @@ const DashboardView = ({ setActive, setSelectedDeal }) => {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 12, padding: 20 }}>
           <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Recent deals</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {DEALS.slice(0, 5).map(d => (
-              <div key={d.id} onClick={() => { setSelectedDeal(d); setActive("risk"); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: T.navyMid, borderRadius: 8, cursor: "pointer", border: `0.5px solid ${T.navyBorder}` }}>
-                <div style={{ width: 32, height: 32, borderRadius: 7, background: riskBg(d.risk), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: riskColor(d.risk) }}>{initials(d.company)}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 2 }}>{d.company}</div>
-                  <div style={{ fontSize: 11, color: T.muted }}>{d.type} · {fmt(d.amount)}</div>
+          {deals.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.muted, textAlign: "center", padding: "24px 0" }}>No deals yet — submit your first application.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {deals.slice(0, 5).map(d => (
+                <div key={d.id} onClick={() => { setSelectedDeal(d); setActive("risk"); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: T.navyMid, borderRadius: 8, cursor: "pointer", border: `0.5px solid ${T.navyBorder}` }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 7, background: riskBg(d.risk), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: riskColor(d.risk) }}>{initials(d.company)}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 2 }}>{d.company}</div>
+                    <div style={{ fontSize: 11, color: T.muted }}>{d.type} · {fmt(d.amount)}</div>
+                  </div>
+                  <Badge label={d.status} color={statusColor(d.status)} bg={statusBg(d.status)} />
                 </div>
-                <Badge label={d.status} color={statusColor(d.status)} bg={statusBg(d.status)} />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 12, padding: 20 }}>
           <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Risk distribution</div>
-          {["low", "medium", "high"].map(r => {
-            const count = DEALS.filter(d => d.risk === r).length;
-            const pct = Math.round((count / DEALS.length) * 100);
-            return (
-              <div key={r} style={{ marginBottom: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                  <span style={{ fontSize: 12, color: T.mutedMid, textTransform: "capitalize" }}>{r} risk</span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: riskColor(r) }}>{count} deals ({pct}%)</span>
-                </div>
-                <div style={{ height: 5, background: "rgba(255,255,255,0.06)", borderRadius: 3 }}>
-                  <div style={{ height: "100%", width: `${pct}%`, background: riskColor(r), borderRadius: 3 }} />
-                </div>
+          {deals.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.muted, textAlign: "center", padding: "24px 0" }}>No data yet.</div>
+          ) : (
+            <>
+              {["low", "medium", "high"].map(r => {
+                const count = deals.filter(d => d.risk === r).length;
+                const pct = Math.round((count / deals.length) * 100);
+                return (
+                  <div key={r} style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                      <span style={{ fontSize: 12, color: T.mutedMid, textTransform: "capitalize" }}>{r} risk</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: riskColor(r) }}>{count} deals ({pct}%)</span>
+                    </div>
+                    <div style={{ height: 5, background: "rgba(255,255,255,0.06)", borderRadius: 3 }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: riskColor(r), borderRadius: 3 }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ marginTop: 20, padding: "12px 14px", background: T.tealDim, border: `0.5px solid rgba(0,180,216,0.2)`, borderRadius: 8 }}>
+                <div style={{ fontSize: 11, color: T.teal, fontWeight: 500, marginBottom: 3 }}>Portfolio health</div>
+                <div style={{ fontSize: 12, color: T.mutedMid }}>Overall risk is <strong style={{ color: T.teal }}>moderate</strong>. {flagged} deal{flagged !== 1 ? "s" : ""} require{flagged === 1 ? "s" : ""} immediate attention.</div>
               </div>
-            );
-          })}
-          <div style={{ marginTop: 20, padding: "12px 14px", background: T.tealDim, border: `0.5px solid rgba(0,180,216,0.2)`, borderRadius: 8 }}>
-            <div style={{ fontSize: 11, color: T.teal, fontWeight: 500, marginBottom: 3 }}>Portfolio health</div>
-            <div style={{ fontSize: 12, color: T.mutedMid }}>Overall risk is <strong style={{ color: T.teal }}>moderate</strong>. 2 deals require immediate attention.</div>
-          </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 };
- 
-const PipelineView = ({ setActive, setSelectedDeal }) => {
+
+const PipelineView = ({ deals, setActive, setSelectedDeal }) => {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const filtered = DEALS.filter(d => {
+  const filtered = deals.filter(d => {
     if (filter !== "all" && d.status !== filter) return false;
     if (search && !d.company.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -240,32 +255,41 @@ const PipelineView = ({ setActive, setSelectedDeal }) => {
           <button key={s} onClick={() => setFilter(s)} style={{ padding: "7px 14px", borderRadius: 7, border: `0.5px solid ${filter === s ? T.teal : T.navyBorder}`, background: filter === s ? T.tealDim : "transparent", color: filter === s ? T.teal : T.muted, fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY, textTransform: "capitalize" }}>{s}</button>
         ))}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-        {filtered.map(d => (
-          <div key={d.id} onClick={() => { setSelectedDeal(d); setActive("risk"); }} style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 12, padding: 18, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = T.tealBorder} onMouseLeave={e => e.currentTarget.style.borderColor = T.navyBorder}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: riskBg(d.risk), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: riskColor(d.risk) }}>{initials(d.company)}</div>
-              <Badge label={d.status} color={statusColor(d.status)} bg={statusBg(d.status)} />
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}>
+          <i className="ti ti-git-branch" style={{ fontSize: 36, display: "block", marginBottom: 12, opacity: 0.3 }} />
+          <div style={{ fontSize: 14, marginBottom: 6 }}>{deals.length === 0 ? "No deals yet" : "No deals match this filter"}</div>
+          <div style={{ fontSize: 12 }}>{deals.length === 0 ? "Submit a new application to get started." : "Try a different filter or search."}</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+          {filtered.map(d => (
+            <div key={d.id} onClick={() => { setSelectedDeal(d); setActive("risk"); }} style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 12, padding: 18, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = T.tealBorder} onMouseLeave={e => e.currentTarget.style.borderColor = T.navyBorder}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: riskBg(d.risk), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: riskColor(d.risk) }}>{initials(d.company)}</div>
+                <Badge label={d.status} color={statusColor(d.status)} bg={statusBg(d.status)} />
+              </div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{d.company}</div>
+              <div style={{ fontSize: 11, color: T.muted, marginBottom: 12 }}>{d.type} · {d.industry}</div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, marginBottom: 14 }}>{fmt(d.amount)}</div>
+              <RiskMeter score={d.riskScore} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+                <span style={{ fontSize: 11, color: T.muted }}>{d.submitted}</span>
+                <span style={{ fontSize: 11, color: T.muted }}>{d.analyst}</span>
+              </div>
             </div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{d.company}</div>
-            <div style={{ fontSize: 11, color: T.muted, marginBottom: 12 }}>{d.type} · {d.industry}</div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, marginBottom: 14 }}>{fmt(d.amount)}</div>
-            <RiskMeter score={d.riskScore} />
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
-              <span style={{ fontSize: 11, color: T.muted }}>{d.submitted}</span>
-              <span style={{ fontSize: 11, color: T.muted }}>{d.analyst}</span>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
- 
-const IntakeView = ({ setActive }) => {
+
+const IntakeView = ({ setActive, user, onDealSaved }) => {
   const [form, setForm] = useState({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" });
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [aiResult, setAiResult] = useState(null);
   const [files, setFiles] = useState([]);
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -282,6 +306,32 @@ const IntakeView = ({ setActive }) => {
     }
     setLoading(false);
   };
+
+  const saveDeal = async () => {
+    setSaving(true);
+    await supabase.from("deals").insert({
+      user_id: user.id,
+      applicant_name: form.company,
+      loan_amount: Number(form.amount),
+      loan_type: form.type,
+      status: "pending",
+      risk_score: aiResult.riskScore,
+      risk_level: aiResult.riskLevel,
+      industry: form.industry || null,
+      abn: form.abn || null,
+      notes: form.notes || null,
+      analyst: user.name,
+      documents: files.length > 0 ? files : null,
+    });
+    await onDealSaved();
+    setSaving(false);
+    setStep(1);
+    setAiResult(null);
+    setFiles([]);
+    setForm({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" });
+    setActive("pipeline");
+  };
+
   const fieldStyle = { width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "10px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", boxSizing: "border-box" };
   const labelStyle = { fontSize: 11, color: T.muted, display: "block", marginBottom: 6, letterSpacing: "0.04em" };
   return (
@@ -347,7 +397,9 @@ const IntakeView = ({ setActive }) => {
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => { setStep(1); setAiResult(null); setFiles([]); setForm({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
-                <button onClick={() => setActive("pipeline")} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>View in Pipeline →</button>
+                <button onClick={saveDeal} disabled={saving} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1, display: "flex", alignItems: "center", gap: 8 }}>
+                  {saving ? <><Spinner /> Saving…</> : "Save & View in Pipeline →"}
+                </button>
               </div>
             </div>
           )}
@@ -356,18 +408,28 @@ const IntakeView = ({ setActive }) => {
     </div>
   );
 };
- 
-const RiskView = ({ selectedDeal, setSelectedDeal }) => {
-  const [deal, setDeal] = useState(selectedDeal || DEALS[1]);
+
+const RiskView = ({ deals, selectedDeal, setSelectedDeal }) => {
+  const [deal, setDeal] = useState(selectedDeal || null);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
-  useEffect(() => { if (selectedDeal) setDeal(selectedDeal); }, [selectedDeal]);
+
+  useEffect(() => {
+    if (selectedDeal) {
+      setDeal(selectedDeal);
+    } else if (!deal && deals.length > 0) {
+      setDeal(deals[0]);
+    }
+  }, [selectedDeal, deals]);
+
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory]);
+
   const runAnalysis = async () => {
+    if (!deal) return;
     setLoading(true);
     setAiAnalysis(null);
     try {
@@ -379,130 +441,151 @@ const RiskView = ({ selectedDeal, setSelectedDeal }) => {
     }
     setLoading(false);
   };
+
   const sendChat = async () => {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || !deal) return;
     const msg = chatInput.trim();
     setChatInput("");
     const newHistory = [...chatHistory, { role: "user", content: msg }];
     setChatHistory(newHistory);
     setChatLoading(true);
     try {
-      const reply = await callClaude(newHistory, `You are Swiftlend AI helping Thomas Cason, a broker in Brisbane QLD. Be concise and professional. Context: ${deal.company}, ${deal.type}, AUD ${deal.amount.toLocaleString()}, risk score ${deal.riskScore}/100, notes: ${deal.notes}`);
+      const reply = await callClaude(newHistory, `You are Swiftlend AI helping a broker. Be concise and professional. Context: ${deal.company}, ${deal.type}, AUD ${deal.amount.toLocaleString()}, risk score ${deal.riskScore}/100, notes: ${deal.notes}`);
       setChatHistory(h => [...h, { role: "assistant", content: reply }]);
     } catch {
       setChatHistory(h => [...h, { role: "assistant", content: "Sorry, I could not process that. Please try again." }]);
     }
     setChatLoading(false);
   };
+
+  if (!deal && deals.length === 0) {
+    return (
+      <div style={{ padding: 48, textAlign: "center", color: T.muted }}>
+        <i className="ti ti-shield-check" style={{ fontSize: 40, display: "block", marginBottom: 14, opacity: 0.3 }} />
+        <div style={{ fontSize: 14, marginBottom: 6, color: T.mutedMid }}>No deals to review</div>
+        <div style={{ fontSize: 12 }}>Submit a new application to get started.</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 300px", height: "100%", minHeight: 0 }}>
       <div style={{ borderRight: `0.5px solid ${T.navyBorder}`, overflowY: "auto", padding: "16px 10px" }}>
         <div style={{ fontSize: 10, color: T.muted, letterSpacing: "0.08em", padding: "0 8px", marginBottom: 8 }}>ALL DEALS</div>
-        {DEALS.map(d => (
-          <div key={d.id} onClick={() => { setDeal(d); setAiAnalysis(null); setChatHistory([]); }} style={{ padding: "10px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 4, background: deal.id === d.id ? T.tealDim : "transparent", border: `0.5px solid ${deal.id === d.id ? T.tealBorder : "transparent"}` }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2, color: deal.id === d.id ? T.teal : T.white }}>{d.company}</div>
+        {deals.map(d => (
+          <div key={d.id} onClick={() => { setDeal(d); setAiAnalysis(null); setChatHistory([]); }} style={{ padding: "10px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 4, background: deal?.id === d.id ? T.tealDim : "transparent", border: `0.5px solid ${deal?.id === d.id ? T.tealBorder : "transparent"}` }}>
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2, color: deal?.id === d.id ? T.teal : T.white }}>{d.company}</div>
             <div style={{ fontSize: 10, color: T.muted, marginBottom: 4 }}>{fmt(d.amount)}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}><div style={{ width: 5, height: 5, borderRadius: "50%", background: riskColor(d.risk) }} /><span style={{ fontSize: 10, color: riskColor(d.risk) }}>{d.risk} risk</span></div>
           </div>
         ))}
       </div>
-      <div style={{ overflowY: "auto", padding: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-          <div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, letterSpacing: -0.5, marginBottom: 4 }}>{deal.company}</div>
-            <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry} · ABN {deal.abn}</div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Badge label={deal.status} color={statusColor(deal.status)} bg={statusBg(deal.status)} />
-            <button onClick={runAnalysis} disabled={loading} style={{ display: "flex", alignItems: "center", gap: 6, background: T.teal, color: T.navy, border: "none", padding: "8px 16px", borderRadius: 7, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
-              {loading ? <><Spinner /> Analysing…</> : "Run AI Analysis"}
-            </button>
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
-          {[["Amount", fmt(deal.amount)], ["Submitted", deal.submitted], ["Analyst", deal.analyst]].map(([l, v]) => (
-            <div key={l} style={{ background: T.navyLight, borderRadius: 10, padding: "12px 14px", border: `0.5px solid ${T.navyBorder}` }}>
-              <div style={{ fontSize: 10, color: T.muted, marginBottom: 4, letterSpacing: "0.04em" }}>{l.toUpperCase()}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, fontFamily: FONT_DISPLAY }}>{v}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginBottom: 20 }}><RiskMeter score={aiAnalysis?.riskScore ?? deal.riskScore} /></div>
-        {aiAnalysis && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: 16 }}>
-              <div style={{ fontSize: 11, color: T.muted, marginBottom: 8, letterSpacing: "0.04em" }}>AI SUMMARY</div>
-              <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.65, marginBottom: 12 }}>{aiAnalysis.summary}</p>
-              <div style={{ display: "flex", gap: 8 }}>
-                <span style={{ fontSize: 11, color: T.muted }}>Recommendation:</span>
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: "capitalize", color: aiAnalysis.recommendation === "approve" ? T.teal : aiAnalysis.recommendation === "decline" ? T.red : T.amber }}>{aiAnalysis.recommendation}</span>
-                <span style={{ fontSize: 11, color: T.muted }}>· {aiAnalysis.confidence}% confidence</span>
+      {deal && (
+        <>
+          <div style={{ overflowY: "auto", padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, letterSpacing: -0.5, marginBottom: 4 }}>{deal.company}</div>
+                <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry} · ABN {deal.abn}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <Badge label={deal.status} color={statusColor(deal.status)} bg={statusBg(deal.status)} />
+                <button onClick={runAnalysis} disabled={loading} style={{ display: "flex", alignItems: "center", gap: 6, background: T.teal, color: T.navy, border: "none", padding: "8px 16px", borderRadius: 7, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
+                  {loading ? <><Spinner /> Analysing…</> : "Run AI Analysis"}
+                </button>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 10, padding: 14 }}>
-                <div style={{ fontSize: 10, color: T.teal, marginBottom: 8, letterSpacing: "0.06em", fontWeight: 600 }}>POSITIVE SIGNALS</div>
-                {aiAnalysis.positives?.map((p, i) => <div key={i} style={{ fontSize: 12, color: T.mutedMid, marginBottom: 5 }}>✓ {p}</div>)}
-              </div>
-              <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.2)`, borderRadius: 10, padding: 14 }}>
-                <div style={{ fontSize: 10, color: T.red, marginBottom: 8, letterSpacing: "0.06em", fontWeight: 600 }}>RISK CONCERNS</div>
-                {aiAnalysis.concerns?.map((c, i) => <div key={i} style={{ fontSize: 12, color: T.mutedMid, marginBottom: 5 }}>▲ {c}</div>)}
-              </div>
-            </div>
-            <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: 10, color: T.muted, marginBottom: 8, letterSpacing: "0.04em" }}>RECOMMENDED NEXT STEPS</div>
-              {aiAnalysis.nextSteps?.map((s, i) => (
-                <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, alignItems: "flex-start" }}>
-                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: T.teal, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
-                  <span style={{ fontSize: 12, color: T.mutedMid, lineHeight: 1.5 }}>{s}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+              {[["Amount", fmt(deal.amount)], ["Submitted", deal.submitted], ["Analyst", deal.analyst]].map(([l, v]) => (
+                <div key={l} style={{ background: T.navyLight, borderRadius: 10, padding: "12px 14px", border: `0.5px solid ${T.navyBorder}` }}>
+                  <div style={{ fontSize: 10, color: T.muted, marginBottom: 4, letterSpacing: "0.04em" }}>{l.toUpperCase()}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, fontFamily: FONT_DISPLAY }}>{v}</div>
                 </div>
               ))}
             </div>
+            <div style={{ marginBottom: 20 }}><RiskMeter score={aiAnalysis?.riskScore ?? deal.riskScore} /></div>
+            {aiAnalysis && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: 16 }}>
+                  <div style={{ fontSize: 11, color: T.muted, marginBottom: 8, letterSpacing: "0.04em" }}>AI SUMMARY</div>
+                  <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.65, marginBottom: 12 }}>{aiAnalysis.summary}</p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: T.muted }}>Recommendation:</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: "capitalize", color: aiAnalysis.recommendation === "approve" ? T.teal : aiAnalysis.recommendation === "decline" ? T.red : T.amber }}>{aiAnalysis.recommendation}</span>
+                    <span style={{ fontSize: 11, color: T.muted }}>· {aiAnalysis.confidence}% confidence</span>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 10, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: T.teal, marginBottom: 8, letterSpacing: "0.06em", fontWeight: 600 }}>POSITIVE SIGNALS</div>
+                    {aiAnalysis.positives?.map((p, i) => <div key={i} style={{ fontSize: 12, color: T.mutedMid, marginBottom: 5 }}>✓ {p}</div>)}
+                  </div>
+                  <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.2)`, borderRadius: 10, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: T.red, marginBottom: 8, letterSpacing: "0.06em", fontWeight: 600 }}>RISK CONCERNS</div>
+                    {aiAnalysis.concerns?.map((c, i) => <div key={i} style={{ fontSize: 12, color: T.mutedMid, marginBottom: 5 }}>▲ {c}</div>)}
+                  </div>
+                </div>
+                <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 10, color: T.muted, marginBottom: 8, letterSpacing: "0.04em" }}>RECOMMENDED NEXT STEPS</div>
+                  {aiAnalysis.nextSteps?.map((s, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, alignItems: "flex-start" }}>
+                      <div style={{ width: 18, height: 18, borderRadius: "50%", background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: T.teal, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                      <span style={{ fontSize: 12, color: T.mutedMid, lineHeight: 1.5 }}>{s}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!aiAnalysis && !loading && (
+              <div style={{ textAlign: "center", padding: "40px 0", color: T.muted }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>🤖</div>
+                <div style={{ fontSize: 14, marginBottom: 6 }}>No AI analysis yet</div>
+                <div style={{ fontSize: 12 }}>Click "Run AI Analysis" to assess this deal</div>
+              </div>
+            )}
           </div>
-        )}
-        {!aiAnalysis && !loading && (
-          <div style={{ textAlign: "center", padding: "40px 0", color: T.muted }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>🤖</div>
-            <div style={{ fontSize: 14, marginBottom: 6 }}>No AI analysis yet</div>
-            <div style={{ fontSize: 12 }}>Click "Run AI Analysis" to assess this deal</div>
-          </div>
-        )}
-      </div>
-      <div style={{ borderLeft: `0.5px solid ${T.navyBorder}`, display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "14px 16px", borderBottom: `0.5px solid ${T.navyBorder}`, display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 24, height: 24, borderRadius: 6, background: T.tealDim, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: T.teal }}>🤖</div>
-          <div><div style={{ fontSize: 12, fontWeight: 600 }}>Swiftlend AI</div><div style={{ fontSize: 10, color: T.teal }}>Online</div></div>
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 10px", display: "flex", flexDirection: "column", gap: 10, minHeight: 200 }}>
-          {chatHistory.length === 0 && <div style={{ fontSize: 12, color: T.muted, textAlign: "center", padding: "20px 0" }}>Ask me anything about this deal.</div>}
-          {chatHistory.map((m, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
-              <div style={{ width: 26, height: 26, borderRadius: "50%", background: m.role === "user" ? T.navyLight : T.tealDim, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: m.role === "user" ? T.mutedMid : T.teal, fontWeight: 600 }}>{m.role === "user" ? "TC" : "AI"}</div>
-              <div style={{ maxWidth: "80%", background: m.role === "user" ? T.navyLight : T.tealDim, border: `0.5px solid ${m.role === "user" ? T.navyBorder : T.tealBorder}`, borderRadius: 10, padding: "8px 12px", fontSize: 12, lineHeight: 1.55, color: T.mutedMid }}>{m.content}</div>
+          <div style={{ borderLeft: `0.5px solid ${T.navyBorder}`, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "14px 16px", borderBottom: `0.5px solid ${T.navyBorder}`, display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 24, height: 24, borderRadius: 6, background: T.tealDim, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: T.teal }}>🤖</div>
+              <div><div style={{ fontSize: 12, fontWeight: 600 }}>Swiftlend AI</div><div style={{ fontSize: 10, color: T.teal }}>Online</div></div>
             </div>
-          ))}
-          {chatLoading && <div style={{ display: "flex", gap: 8 }}><div style={{ width: 26, height: 26, borderRadius: "50%", background: T.tealDim, display: "flex", alignItems: "center", justifyContent: "center" }}><Spinner /></div><div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 10, padding: "8px 12px", fontSize: 12, color: T.muted }}>Thinking…</div></div>}
-          <div ref={chatEndRef} />
-        </div>
-        <div style={{ padding: "10px 12px", borderTop: `0.5px solid ${T.navyBorder}`, display: "flex", gap: 8 }}>
-          <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendChat()} placeholder="Ask about this deal…" style={{ flex: 1, background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 7, padding: "8px 12px", color: T.white, fontSize: 12, fontFamily: FONT_BODY, outline: "none" }} />
-          <button onClick={sendChat} style={{ background: T.teal, color: T.navy, border: "none", borderRadius: 7, padding: "8px 12px", cursor: "pointer", fontSize: 14 }}>→</button>
-        </div>
-      </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 10px", display: "flex", flexDirection: "column", gap: 10, minHeight: 200 }}>
+              {chatHistory.length === 0 && <div style={{ fontSize: 12, color: T.muted, textAlign: "center", padding: "20px 0" }}>Ask me anything about this deal.</div>}
+              {chatHistory.map((m, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
+                  <div style={{ width: 26, height: 26, borderRadius: "50%", background: m.role === "user" ? T.navyLight : T.tealDim, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: m.role === "user" ? T.mutedMid : T.teal, fontWeight: 600 }}>{m.role === "user" ? "ME" : "AI"}</div>
+                  <div style={{ maxWidth: "80%", background: m.role === "user" ? T.navyLight : T.tealDim, border: `0.5px solid ${m.role === "user" ? T.navyBorder : T.tealBorder}`, borderRadius: 10, padding: "8px 12px", fontSize: 12, lineHeight: 1.55, color: T.mutedMid }}>{m.content}</div>
+                </div>
+              ))}
+              {chatLoading && <div style={{ display: "flex", gap: 8 }}><div style={{ width: 26, height: 26, borderRadius: "50%", background: T.tealDim, display: "flex", alignItems: "center", justifyContent: "center" }}><Spinner /></div><div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 10, padding: "8px 12px", fontSize: 12, color: T.muted }}>Thinking…</div></div>}
+              <div ref={chatEndRef} />
+            </div>
+            <div style={{ padding: "10px 12px", borderTop: `0.5px solid ${T.navyBorder}`, display: "flex", gap: 8 }}>
+              <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendChat()} placeholder="Ask about this deal…" style={{ flex: 1, background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 7, padding: "8px 12px", color: T.white, fontSize: 12, fontFamily: FONT_BODY, outline: "none" }} />
+              <button onClick={sendChat} style={{ background: T.teal, color: T.navy, border: "none", borderRadius: 7, padding: "8px 12px", cursor: "pointer", fontSize: 14 }}>→</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
- 
-const LenderMatchView = () => {
-  const [deal, setDeal] = useState(DEALS[0]);
+
+const LenderMatchView = ({ deals }) => {
+  const [deal, setDeal] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (deals.length > 0 && !deal) setDeal(deals[0]);
+  }, [deals]);
 
   const likelihoodColor = (l) => ({ High: T.teal, Medium: T.amber, Low: T.red }[l] || T.muted);
   const likelihoodBg = (l) => ({ High: T.tealDim, Medium: T.amberDim, Low: T.redDim }[l] || "transparent");
 
   const runMatch = async () => {
+    if (!deal) return;
     setLoading(true);
     setResult(null);
     setError(null);
@@ -520,42 +603,54 @@ const LenderMatchView = () => {
     setLoading(false);
   };
 
+  if (deals.length === 0) {
+    return (
+      <div style={{ padding: 48, textAlign: "center", color: T.muted }}>
+        <i className="ti ti-building-bank" style={{ fontSize: 40, display: "block", marginBottom: 14, opacity: 0.3 }} />
+        <div style={{ fontSize: 14, marginBottom: 6, color: T.mutedMid }}>No deals available</div>
+        <div style={{ fontSize: 12 }}>Submit a new application first to run lender matching.</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 32, maxWidth: 860 }}>
       <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 24 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 11, color: T.muted, marginBottom: 6, letterSpacing: "0.04em" }}>SELECT DEAL</div>
           <select
-            value={deal.id}
-            onChange={e => { setDeal(DEALS.find(d => d.id === e.target.value)); setResult(null); setError(null); }}
+            value={deal?.id || ""}
+            onChange={e => { setDeal(deals.find(d => d.id === e.target.value)); setResult(null); setError(null); }}
             style={{ width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "10px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", cursor: "pointer" }}
           >
-            {DEALS.map(d => (
+            {deals.map(d => (
               <option key={d.id} value={d.id}>{d.company} — {d.type} — {fmt(d.amount)}</option>
             ))}
           </select>
         </div>
         <button
           onClick={runMatch}
-          disabled={loading}
+          disabled={loading || !deal}
           style={{ display: "flex", alignItems: "center", gap: 8, background: T.teal, color: T.navy, border: "none", padding: "11px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1, whiteSpace: "nowrap" }}
         >
           {loading ? <><Spinner /> Matching…</> : <><i className="ti ti-building-bank" style={{ fontSize: 15 }} /> Find Lenders</>}
         </button>
       </div>
 
-      <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: "14px 18px", marginBottom: 28, display: "flex", gap: 20, alignItems: "center" }}>
-        <div style={{ width: 38, height: 38, borderRadius: 8, background: riskBg(deal.risk), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: riskColor(deal.risk), flexShrink: 0 }}>{initials(deal.company)}</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 14, fontWeight: 700, marginBottom: 2 }}>{deal.company}</div>
-          <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry} · {fmt(deal.amount)}</div>
+      {deal && (
+        <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: "14px 18px", marginBottom: 28, display: "flex", gap: 20, alignItems: "center" }}>
+          <div style={{ width: 38, height: 38, borderRadius: 8, background: riskBg(deal.risk), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: riskColor(deal.risk), flexShrink: 0 }}>{initials(deal.company)}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 14, fontWeight: 700, marginBottom: 2 }}>{deal.company}</div>
+            <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry} · {fmt(deal.amount)}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: T.muted, marginBottom: 2, letterSpacing: "0.04em" }}>RISK SCORE</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 800, color: riskColor(deal.risk) }}>{deal.riskScore}/100</div>
+          </div>
+          <Badge label={deal.risk + " risk"} color={riskColor(deal.risk)} bg={riskBg(deal.risk)} />
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 10, color: T.muted, marginBottom: 2, letterSpacing: "0.04em" }}>RISK SCORE</div>
-          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 800, color: riskColor(deal.risk) }}>{deal.riskScore}/100</div>
-        </div>
-        <Badge label={deal.risk + " risk"} color={riskColor(deal.risk)} bg={riskBg(deal.risk)} />
-      </div>
+      )}
 
       {loading && (
         <div style={{ textAlign: "center", padding: "60px 0" }}>
@@ -628,11 +723,11 @@ const LenderMatchView = () => {
   );
 };
 
-const AuditView = () => (
+const AuditView = ({ deals }) => (
   <div style={{ padding: 32 }}>
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
       {AUDIT_LOGS.map((log, i) => {
-        const d = DEALS.find(d => d.id === log.deal);
+        const d = deals.find(d => d.id === log.deal);
         return (
           <div key={log.id} style={{ display: "flex", gap: 16, padding: "16px 0", borderBottom: `0.5px solid ${T.navyBorder}` }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 32 }}>
@@ -657,7 +752,7 @@ const AuditView = () => (
     </div>
   </div>
 );
- 
+
 const AdminView = () => (
   <div style={{ padding: 32, display: "flex", flexDirection: "column", gap: 28 }}>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
@@ -700,9 +795,9 @@ const AdminView = () => (
     </div>
   </div>
 );
- 
+
 const LoginView = ({ onLogin }) => {
-  const [mode, setMode] = useState("signin"); // "signin" | "signup" | "reset"
+  const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -895,17 +990,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [active, setActive] = useState("dashboard");
   const [selectedDeal, setSelectedDeal] = useState(null);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) setUser(buildUser(session.user));
-      setAuthLoading(false);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ? buildUser(session.user) : null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  const [deals, setDeals] = useState([]);
 
   const buildUser = (sbUser) => {
     const displayName = sbUser.user_metadata?.full_name || sbUser.email.split("@")[0];
@@ -916,16 +1001,48 @@ export default function App() {
     return { email: sbUser.email, name: displayName, role: sbUser.user_metadata?.role || "Broker", initials: userInitials, id: sbUser.id };
   };
 
+  const fetchDeals = async (userId) => {
+    const { data } = await supabase
+      .from("deals")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    if (data) setDeals(data.map(normalizeRow));
+  };
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const u = buildUser(session.user);
+        setUser(u);
+        fetchDeals(u.id);
+      }
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const u = buildUser(session.user);
+        setUser(u);
+        fetchDeals(u.id);
+      } else {
+        setUser(null);
+        setDeals([]);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
     setActive("dashboard");
     setSelectedDeal(null);
+    setDeals([]);
   };
 
   const PAGE_TITLES = {
     dashboard: ["Dashboard", `Good morning, ${user?.name || ""} — welcome to Swiftlend`],
-    pipeline: ["Deal Pipeline", `${DEALS.length} active applications`],
+    pipeline: ["Deal Pipeline", `${deals.length} active application${deals.length !== 1 ? "s" : ""}`],
     intake: ["New Application", "Submit and AI-assess a new finance application"],
     risk: ["Risk Review", "AI-powered deal assessment with live chat"],
     lender: ["Lender Match", "AI-powered lender compatibility matching"],
@@ -933,18 +1050,20 @@ export default function App() {
     admin: ["Admin & Billing", "Manage your plan, team, and account settings"],
   };
   const [title, subtitle] = PAGE_TITLES[active] || ["Swiftlend", ""];
+
   const renderView = () => {
     switch (active) {
-      case "dashboard": return <DashboardView setActive={setActive} setSelectedDeal={setSelectedDeal} />;
-      case "pipeline": return <PipelineView setActive={setActive} setSelectedDeal={setSelectedDeal} />;
-      case "intake": return <IntakeView setActive={setActive} />;
-      case "risk": return <RiskView selectedDeal={selectedDeal} setSelectedDeal={setSelectedDeal} />;
-      case "lender": return <LenderMatchView />;
-      case "audit": return <AuditView />;
+      case "dashboard": return <DashboardView deals={deals} setActive={setActive} setSelectedDeal={setSelectedDeal} />;
+      case "pipeline": return <PipelineView deals={deals} setActive={setActive} setSelectedDeal={setSelectedDeal} />;
+      case "intake": return <IntakeView setActive={setActive} user={user} onDealSaved={() => fetchDeals(user.id)} />;
+      case "risk": return <RiskView deals={deals} selectedDeal={selectedDeal} setSelectedDeal={setSelectedDeal} />;
+      case "lender": return <LenderMatchView deals={deals} />;
+      case "audit": return <AuditView deals={deals} />;
       case "admin": return <AdminView />;
       default: return null;
     }
   };
+
   return (
     <>
       <style>{`
