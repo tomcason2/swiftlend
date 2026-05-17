@@ -29,7 +29,7 @@ const normalizeRow = (row) => ({
   type: row.loan_type,
   amount: row.loan_amount,
   status: row.status,
-  risk: row.risk_level || "low",
+  risk: row.risk_level || (row.risk_score < 35 ? "low" : row.risk_score < 65 ? "medium" : "high"),
   riskScore: row.risk_score || 0,
   submitted: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
   analyst: row.analyst || "Unassigned",
@@ -319,11 +319,6 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       loan_type: form.type,
       status: "pending",
       risk_score: aiResult.riskScore,
-      risk_level: aiResult.riskLevel,
-      industry: form.industry || null,
-      notes: form.notes || null,
-      analyst: user.name,
-      documents: files.length > 0 ? files : null,
     }).select();
     console.log("Insert result:", { data, error });
     if (error) {

@@ -1,4 +1,5 @@
--- Run this in your Supabase SQL editor
+-- Run this in your Supabase SQL editor to create the deals table
+-- (only the columns the app actually inserts)
 
 create table if not exists deals (
   id uuid primary key default gen_random_uuid(),
@@ -8,12 +9,6 @@ create table if not exists deals (
   loan_type text not null,
   status text not null default 'pending',
   risk_score integer default 0,
-  risk_level text default 'low',
-  industry text,
-  abn text,
-  notes text,
-  analyst text,
-  documents text[],
   created_at timestamptz default now()
 );
 
