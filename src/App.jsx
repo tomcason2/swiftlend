@@ -321,7 +321,6 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       risk_score: aiResult.riskScore,
       risk_level: aiResult.riskLevel,
       industry: form.industry || null,
-      abn: form.abn || null,
       notes: form.notes || null,
       analyst: user.name,
       documents: files.length > 0 ? files : null,
