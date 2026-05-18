@@ -23,21 +23,49 @@ const T = {
 const FONT_DISPLAY = "'Syne', sans-serif";
 const FONT_BODY = "'DM Sans', sans-serif";
 
-const normalizeRow = (row) => ({
-  id: row.id,
-  company: row.applicant_name,
-  type: row.loan_type,
-  amount: row.loan_amount,
-  status: row.status,
-  risk: row.risk_level || (row.risk_score < 35 ? "low" : row.risk_score < 65 ? "medium" : "high"),
-  riskScore: row.risk_score || 0,
-  submitted: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
-  analyst: row.analyst || "Unassigned",
-  industry: row.industry || "",
-  abn: row.abn || "",
-  notes: row.notes || "",
-  documents: row.documents || [],
-});
+const normalizeRow = (row) => {
+  // Use nullish coalescing so a legitimate score of 0 isn't treated as
+  // "missing", and only fall through to the score-based bucket when the
+  // server hasn't supplied an explicit risk_level. If both are absent we
+  // default to "medium" instead of silently labelling unknown deals "low".
+  const score = row.risk_score ?? null;
+  const bucketFromScore =
+    score == null
+      ? "medium"
+      : score < 35
+      ? "low"
+      : score < 65
+      ? "medium"
+      : "high";
+  return {
+    id: row.id,
+    company: row.applicant_name,
+    type: row.loan_type,
+    amount: row.loan_amount,
+    status: row.status,
+    risk: row.risk_level || bucketFromScore,
+    riskScore: score ?? 0,
+    submitted: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
+    analyst: row.analyst || "Unassigned",
+    industry: row.industry || "",
+    abn: row.abn || "",
+    notes: row.notes || "",
+    documents: row.documents || [],
+  };
+};
+
+// Approximate "this week" filter — Monday 00:00 local to now.
+const isThisWeek = (isoDate) => {
+  if (!isoDate) return false;
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  const dayOfWeek = (now.getDay() + 6) % 7; // 0 = Monday
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - dayOfWeek);
+  return d >= monday && d <= now;
+};
 
 const AUDIT_LOGS = [
   { id: 1, deal: "D001", action: "Status changed to Approved", user: "Tom C.", time: "2026-05-07 14:32", note: "All checks passed. Strong DTI ratio." },
@@ -66,24 +94,57 @@ const statusColor = (s) => ({ approved: T.teal, review: T.amber, flagged: T.red,
 const statusBg = (s) => ({ approved: T.tealDim, review: T.amberDim, flagged: T.redDim, pending: "rgba(255,255,255,0.06)", declined: T.redDim }[s] || "transparent");
 const initials = (name) => name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
 
+// SECURITY WARNING
+// ----------------
+// In development this calls api.anthropic.com directly from the browser,
+// shipping VITE_ANTHROPIC_KEY to every visitor. Anyone can open DevTools
+// and steal that key.
+//
+// For ANY deployed environment, set VITE_CLAUDE_PROXY_URL to the URL of
+// the Supabase Edge Function in supabase/functions/claude-proxy/ and
+// leave VITE_ANTHROPIC_KEY unset. The function adds the key server-side.
 async function callClaude(messages, systemPrompt) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": import.meta.env.VITE_ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages,
-    }),
-  });
+  const proxyUrl = import.meta.env.VITE_CLAUDE_PROXY_URL;
+  const directKey = import.meta.env.VITE_ANTHROPIC_KEY;
+
+  const body = {
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1000,
+    system: systemPrompt,
+    messages,
+  };
+
+  let res;
+  if (proxyUrl) {
+    res = await fetch(proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } else {
+    if (!directKey) {
+      throw new Error(
+        "callClaude: neither VITE_CLAUDE_PROXY_URL nor VITE_ANTHROPIC_KEY is set."
+      );
+    }
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": directKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`callClaude: ${res.status} ${res.statusText} ${text}`);
+  }
   const data = await res.json();
-  return data.content?.map(b => b.text || "").join("") || "";
+  return data.content?.map((b) => b.text || "").join("") || "";
 }
 
 const Badge = ({ label, color, bg }) => (
@@ -164,8 +225,10 @@ const Topbar = ({ title, subtitle }) => (
 );
 
 const DashboardView = ({ deals, setActive, setSelectedDeal }) => {
-  const total = deals.reduce((a, d) => a + d.amount, 0);
-  const approved = deals.filter(d => d.status === "approved").length;
+  const total = deals.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+  // The card label says "Approved This Week" — filter accordingly instead of
+  // counting every approved deal that ever existed.
+  const approved = deals.filter(d => d.status === "approved" && isThisWeek(d.submitted)).length;
   const flagged = deals.filter(d => d.status === "flagged" || d.risk === "high").length;
   const pending = deals.filter(d => d.status === "pending").length;
   const statCard = (label, value, sub, color = T.white) => (
@@ -302,7 +365,8 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       const raw = await callClaude([{ role: "user", content: prompt }], "You are a financial risk AI. Respond only with valid JSON, no markdown, no backticks.");
       const result = JSON.parse(raw.replace(/```json|```/g, "").trim());
       setAiResult(result);
-    } catch (e) {
+    } catch (err) {
+      console.error("[runAI] AI assessment failed:", err);
       setAiResult({ riskScore: 45, riskLevel: "medium", summary: "Unable to complete AI assessment. Please review manually.", flags: ["Assessment error — manual review required"], recommendation: "review", confidence: 0 });
     }
     setLoading(false);
@@ -368,7 +432,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
             <i className="ti ti-cloud-upload" style={{ fontSize: 32, color: T.muted, marginBottom: 12, display: "block" }} />
             <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Drag and drop documents here</div>
             <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Financials, bank statements, tax returns, quotes</div>
-            <label style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, color: T.teal, padding: "8px 18px", borderRadius: 7, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY }}>Browse files<input type="file" multiple style={{ display: "none" }} onChange={e => setFiles(f => [...f, ...Array.from(e.target.files).map(fl => fl.name)])} /></label>
+            <label style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, color: T.teal, padding: "8px 18px", borderRadius: 7, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY }}>Browse files<input type="file" multiple style={{ display: "none" }} onChange={e => { const picked = e.target.files; if (!picked || picked.length === 0) return; setFiles(f => [...f, ...Array.from(picked).map(fl => fl.name)]); e.target.value = ""; }} /></label>
           </div>
           {files.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{files.map((f, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8 }}><i className="ti ti-file-text" style={{ color: T.teal, fontSize: 14 }} /><span style={{ fontSize: 12, flex: 1 }}>{f}</span><button onClick={() => setFiles(fs => fs.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14 }}>×</button></div>))}</div>}
           <div style={{ display: "flex", gap: 10 }}>
@@ -393,7 +457,6 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
                   <div style={{ marginLeft: "auto", textAlign: "right" }}>
                     <div style={{ fontSize: 11, color: T.muted, marginBottom: 3 }}>Recommendation</div>
                     <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700, textTransform: "capitalize", color: aiResult.recommendation === "approve" ? T.teal : aiResult.recommendation === "decline" ? T.red : T.amber }}>{aiResult.recommendation}</div>
-                    <div style={{ fontSize: 11, color: T.muted }}>{aiResult.confidence}% confidence</div>
                   </div>
                 </div>
                 <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.6, marginBottom: 14 }}>{aiResult.summary}</p>
@@ -418,7 +481,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
   );
 };
 
-const RiskView = ({ deals, selectedDeal, setSelectedDeal }) => {
+const RiskView = ({ deals, selectedDeal }) => {
   const [deal, setDeal] = useState(selectedDeal || null);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -428,11 +491,18 @@ const RiskView = ({ deals, selectedDeal, setSelectedDeal }) => {
   const chatEndRef = useRef(null);
 
   useEffect(() => {
+    // Intentional prop-to-state sync: when the parent picks a different
+    // deal we mirror it locally and wipe stale AI / chat state.
     if (selectedDeal) {
       setDeal(selectedDeal);
+      setAiAnalysis(null);
+      setChatHistory([]);
     } else if (!deal && deals.length > 0) {
       setDeal(deals[0]);
     }
+    // `deal` is intentionally excluded — including it would re-run this
+    // effect every time we set the deal locally from the sidebar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
   }, [selectedDeal, deals]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory]);
@@ -521,7 +591,6 @@ const RiskView = ({ deals, selectedDeal, setSelectedDeal }) => {
                   <div style={{ display: "flex", gap: 8 }}>
                     <span style={{ fontSize: 11, color: T.muted }}>Recommendation:</span>
                     <span style={{ fontSize: 11, fontWeight: 600, textTransform: "capitalize", color: aiAnalysis.recommendation === "approve" ? T.teal : aiAnalysis.recommendation === "decline" ? T.red : T.amber }}>{aiAnalysis.recommendation}</span>
-                    <span style={{ fontSize: 11, color: T.muted }}>· {aiAnalysis.confidence}% confidence</span>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -587,7 +656,9 @@ const LenderMatchView = ({ deals }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    // First-load default: pick the first deal once the list arrives.
     if (deals.length > 0 && !deal) setDeal(deals[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
   }, [deals]);
 
   const likelihoodColor = (l) => ({ High: T.teal, Medium: T.amber, Low: T.red }[l] || T.muted);
@@ -861,8 +932,10 @@ const LoginView = ({ onLogin }) => {
   const handleReset = async (e) => {
     e.preventDefault();
     setError("");
+    const trimmed = email.trim();
+    if (!trimmed) { setError("Enter an email address first."); return; }
     setLoading(true);
-    const { error: authError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+    const { error: authError } = await supabase.auth.resetPasswordForEmail(trimmed, {
       redirectTo: window.location.origin,
     });
     if (authError) {
@@ -1010,30 +1083,46 @@ export default function App() {
     return { email: sbUser.email, name: displayName, role: sbUser.user_metadata?.role || "Broker", initials: userInitials, id: sbUser.id };
   };
 
-  const fetchDeals = async (userId) => {
-    const { data } = await supabase
+  const fetchDeals = async (userId, userName) => {
+    if (!userId) return;
+    const { data, error } = await supabase
       .from("deals")
       .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
-    if (data) setDeals(data.map(normalizeRow));
+    if (error) {
+      console.error("[fetchDeals] Supabase error:", error);
+      return;
+    }
+    if (data) setDeals(data.map(row => ({ ...normalizeRow(row), analyst: row.analyst || userName || "Unassigned" })));
   };
+
+  // Track the last user id we hydrated for, so token refreshes don't
+  // trigger redundant re-fetches every ~hour.
+  const lastUserIdRef = useRef(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         const u = buildUser(session.user);
         setUser(u);
-        fetchDeals(u.id);
+        lastUserIdRef.current = u.id;
+        fetchDeals(u.id, u.name);
       }
       setAuthLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
         const u = buildUser(session.user);
         setUser(u);
-        fetchDeals(u.id);
-      } else {
+        // Only refetch when the user actually changed (sign-in / switch),
+        // not on every TOKEN_REFRESHED event.
+        if (lastUserIdRef.current !== u.id) {
+          lastUserIdRef.current = u.id;
+          fetchDeals(u.id, u.name);
+        }
+      } else if (event === "SIGNED_OUT") {
+        lastUserIdRef.current = null;
         setUser(null);
         setDeals([]);
       }
@@ -1064,8 +1153,8 @@ export default function App() {
     switch (active) {
       case "dashboard": return <DashboardView deals={deals} setActive={setActive} setSelectedDeal={setSelectedDeal} />;
       case "pipeline": return <PipelineView deals={deals} setActive={setActive} setSelectedDeal={setSelectedDeal} />;
-      case "intake": return <IntakeView setActive={setActive} user={user} onDealSaved={() => fetchDeals(user.id)} />;
-      case "risk": return <RiskView deals={deals} selectedDeal={selectedDeal} setSelectedDeal={setSelectedDeal} />;
+      case "intake": return <IntakeView setActive={setActive} user={user} onDealSaved={() => fetchDeals(user.id, user.name)} />;
+      case "risk": return <RiskView deals={deals} selectedDeal={selectedDeal} />;
       case "lender": return <LenderMatchView deals={deals} />;
       case "audit": return <AuditView deals={deals} />;
       case "admin": return <AdminView />;
@@ -1075,8 +1164,9 @@ export default function App() {
 
   return (
     <>
+      {/* Fonts (Syne + DM Sans) are loaded via <link> in index.html — faster
+          and non-blocking. Tabler Icons is loaded the same way. */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;700;800&family=DM+Sans:wght@300;400;500&display=swap');
         @keyframes spin { to { transform: rotate(360deg); } }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #071A2C; color: #ffffff; font-family: 'DM Sans', sans-serif; }
