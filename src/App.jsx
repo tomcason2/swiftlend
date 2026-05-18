@@ -23,14 +23,18 @@ const T = {
 const FONT_DISPLAY = "'Syne', sans-serif";
 const FONT_BODY = "'DM Sans', sans-serif";
 
+// Format an ISO timestamp or date string as "17 May 2026"
+const fmtDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
+};
+
 const normalizeRow = (row) => {
-  // Use nullish coalescing so a legitimate score of 0 isn't treated as
-  // "missing", and only fall through to the score-based bucket when the
-  // server hasn't supplied an explicit risk_level. If both are absent we
-  // default to "medium" instead of silently labelling unknown deals "low".
   const score = row.risk_score ?? null;
-  // Score is a credit-quality score: 100 = excellent, 0 = very high risk.
-  const bucketFromScore =
+  // Credit-quality scale: 100 = excellent, 0 = very high risk.
+  // Always derive risk label from the score so it can never contradict it.
+  const risk =
     score == null ? "medium"
     : score >= 65  ? "low"
     : score >= 35  ? "medium"
@@ -41,9 +45,10 @@ const normalizeRow = (row) => {
     type: row.loan_type,
     amount: row.loan_amount,
     status: row.status,
-    risk: row.risk_level || bucketFromScore,
+    risk,
     riskScore: score ?? 0,
-    submitted: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
+    submitted: fmtDate(row.created_at),
+    createdAt: row.created_at || "",
     analyst: row.analyst || "Unassigned",
     industry: row.industry || "",
     abn: row.abn || "",
@@ -65,14 +70,6 @@ const isThisWeek = (isoDate) => {
   return d >= monday && d <= now;
 };
 
-const AUDIT_LOGS = [
-  { id: 1, deal: "D001", action: "Status changed to Approved", user: "Tom C.", time: "2026-05-07 14:32", note: "All checks passed. Strong DTI ratio." },
-  { id: 2, deal: "D003", action: "Risk flag raised", user: "Swiftlend AI", time: "2026-05-05 09:18", note: "Irregular cash flow detected in months 3, 5, 6." },
-  { id: 3, deal: "D002", action: "Sent for human review", user: "Swiftlend AI", time: "2026-05-06 11:05", note: "Medium risk score 54 — requires analyst sign-off." },
-  { id: 4, deal: "D007", action: "Status changed to Declined", user: "James L.", time: "2026-05-03 16:44", note: "DTI 3.8x exceeds policy limit of 2.5x." },
-  { id: 5, deal: "D006", action: "Status changed to Approved", user: "Tom C.", time: "2026-05-04 10:20", note: "Government contracts provide strong security." },
-  { id: 6, deal: "D004", action: "Application received", user: "System", time: "2026-05-08 08:03", note: "Auto-ingested via broker portal." },
-];
 
 const LENDERS = [
   { name: "Pepper Money", types: ["Equipment Finance", "Commercial Loan"], risk: ["medium", "high"], maxAmount: 2000000, industries: "all" },
@@ -335,7 +332,7 @@ const PipelineView = ({ deals, setActive, setSelectedDeal }) => {
                 <Badge label={d.status} color={statusColor(d.status)} bg={statusBg(d.status)} />
               </div>
               <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{d.company}</div>
-              <div style={{ fontSize: 11, color: T.muted, marginBottom: 12 }}>{d.type} · {d.industry}</div>
+              <div style={{ fontSize: 11, color: T.muted, marginBottom: 12 }}>{d.type} · {d.industry}{d.abn ? ` · ABN ${d.abn}` : ""}</div>
               <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, marginBottom: 14 }}>{fmt(d.amount)}</div>
               <RiskMeter score={d.riskScore} />
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
@@ -385,6 +382,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       loan_type: form.type,
       status: "pending",
       risk_score: aiResult.riskScore,
+      abn: form.abn || null,
     }).select();
     console.log("Insert result:", { data, error });
     if (error) {
@@ -805,35 +803,73 @@ const LenderMatchView = ({ deals }) => {
   );
 };
 
-const AuditView = ({ deals }) => (
-  <div style={{ padding: 32 }}>
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {AUDIT_LOGS.map((log, i) => {
-        const d = deals.find(d => d.id === log.deal);
-        return (
+const buildAuditEntries = (deals) => {
+  const entries = [];
+  deals.forEach(d => {
+    entries.push({
+      id: `${d.id}-submit`,
+      action: "Application submitted",
+      company: d.company,
+      user: d.analyst,
+      time: d.submitted,
+      createdAt: d.createdAt,
+      note: `${d.type} · ${fmt(d.amount)} · Credit score ${d.riskScore}/100`,
+      dotColor: T.teal,
+    });
+    entries.push({
+      id: `${d.id}-ai`,
+      action: "AI credit assessment completed",
+      company: d.company,
+      user: "Swiftlend AI",
+      time: d.submitted,
+      createdAt: d.createdAt,
+      note: `Credit score ${d.riskScore}/100 — Recommendation: ${scoreToRec(d.riskScore)}`,
+      dotColor: T.teal,
+    });
+    if (d.status !== "pending") {
+      const actionLabel = { approved: "Status changed to Approved", declined: "Status changed to Declined", review: "Sent for manual review", flagged: "Flagged for high risk" }[d.status];
+      const dotColor = { approved: T.teal, declined: T.red, review: T.amber, flagged: T.red }[d.status] || T.muted;
+      if (actionLabel) entries.push({ id: `${d.id}-status`, action: actionLabel, company: d.company, user: d.analyst, time: d.submitted, createdAt: d.createdAt, note: `${d.company} · ${d.type}`, dotColor });
+    }
+  });
+  return entries.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+};
+
+const AuditView = ({ deals }) => {
+  const logs = buildAuditEntries(deals);
+  if (logs.length === 0) return (
+    <div style={{ padding: 48, textAlign: "center", color: T.muted }}>
+      <i className="ti ti-clipboard-list" style={{ fontSize: 36, display: "block", marginBottom: 12, opacity: 0.3 }} />
+      <div style={{ fontSize: 14, marginBottom: 6, color: T.mutedMid }}>No audit entries yet</div>
+      <div style={{ fontSize: 12 }}>Submit a deal to start the trail.</div>
+    </div>
+  );
+  return (
+    <div style={{ padding: 32 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        {logs.map((log, i) => (
           <div key={log.id} style={{ display: "flex", gap: 16, padding: "16px 0", borderBottom: `0.5px solid ${T.navyBorder}` }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 32 }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: log.user === "Swiftlend AI" ? T.teal : log.user === "System" ? T.muted : T.amber, flexShrink: 0, marginTop: 4 }} />
-              {i < AUDIT_LOGS.length - 1 && <div style={{ width: 1, flex: 1, background: T.navyBorder, marginTop: 4 }} />}
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: log.dotColor, flexShrink: 0, marginTop: 4 }} />
+              {i < logs.length - 1 && <div style={{ width: 1, flex: 1, background: T.navyBorder, marginTop: 4 }} />}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 4 }}>
                 <span style={{ fontSize: 12, fontWeight: 600 }}>{log.action}</span>
-                <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: T.tealDim, color: T.teal }}>{log.deal}</span>
+                <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: T.tealDim, color: T.teal }}>{log.company}</span>
               </div>
               <div style={{ fontSize: 12, color: T.muted, marginBottom: 6 }}>{log.note}</div>
               <div style={{ display: "flex", gap: 12, fontSize: 11, color: T.muted }}>
                 <span>{log.user}</span>
                 <span>{log.time}</span>
-                {d && <span>{d.company}</span>}
               </div>
             </div>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const AdminView = () => (
   <div style={{ padding: 32, display: "flex", flexDirection: "column", gap: 28 }}>
