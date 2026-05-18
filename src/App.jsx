@@ -29,14 +29,12 @@ const normalizeRow = (row) => {
   // server hasn't supplied an explicit risk_level. If both are absent we
   // default to "medium" instead of silently labelling unknown deals "low".
   const score = row.risk_score ?? null;
+  // Score is a credit-quality score: 100 = excellent, 0 = very high risk.
   const bucketFromScore =
-    score == null
-      ? "medium"
-      : score < 35
-      ? "low"
-      : score < 65
-      ? "medium"
-      : "high";
+    score == null ? "medium"
+    : score >= 65  ? "low"
+    : score >= 35  ? "medium"
+    : "high";
   return {
     id: row.id,
     company: row.applicant_name,
@@ -151,12 +149,16 @@ const Badge = ({ label, color, bg }) => (
   <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 9px", borderRadius: 5, background: bg, color, textTransform: "capitalize", whiteSpace: "nowrap" }}>{label}</span>
 );
 
+// Helpers — score is a credit-quality score (100 = safest, 0 = riskiest)
+const scoreToRisk = (s) => s >= 65 ? "low" : s >= 35 ? "medium" : "high";
+const scoreToRec  = (s) => s >= 65 ? "approve" : s >= 35 ? "review" : "decline";
+
 const RiskMeter = ({ score }) => {
-  const color = score < 35 ? T.teal : score < 65 ? T.amber : T.red;
+  const color = score >= 65 ? T.teal : score >= 35 ? T.amber : T.red;
   return (
     <div style={{ width: "100%" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 11, color: T.muted }}>Risk score</span>
+        <span style={{ fontSize: 11, color: T.muted }}>Credit score</span>
         <span style={{ fontSize: 12, fontWeight: 600, color }}>{score}/100</span>
       </div>
       <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
@@ -361,7 +363,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
     setLoading(true);
     setStep(3);
     try {
-      const prompt = `Assess this loan application. Return JSON only, no markdown:\n{"riskScore":number,"riskLevel":"low"|"medium"|"high","summary":"2 sentences","flags":["up to 4 concerns"],"recommendation":"approve"|"review"|"decline","confidence":number}\nCompany: ${form.company}, Industry: ${form.industry}, Type: ${form.type}, Amount: AUD ${form.amount}, Notes: ${form.notes || "None"}`;
+      const prompt = `Assess this loan application. Return JSON only, no markdown:\n{"riskScore":number 0-100 where 100=excellent creditworthiness and 0=very high risk,"summary":"2 sentences","flags":["up to 4 key concerns"]}\nCompany: ${form.company}, Industry: ${form.industry}, Type: ${form.type}, Amount: AUD ${form.amount}, Notes: ${form.notes || "None"}`;
       const raw = await callClaude([{ role: "user", content: prompt }], "You are a financial risk AI. Respond only with valid JSON, no markdown, no backticks.");
       const result = JSON.parse(raw.replace(/```json|```/g, "").trim());
       setAiResult(result);
@@ -450,13 +452,13 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
             </div>
           ) : aiResult && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div style={{ background: riskBg(aiResult.riskLevel), border: `0.5px solid ${riskColor(aiResult.riskLevel)}33`, borderRadius: 12, padding: 20 }}>
+              <div style={{ background: riskBg(scoreToRisk(aiResult.riskScore)), border: `0.5px solid ${riskColor(scoreToRisk(aiResult.riskScore))}33`, borderRadius: 12, padding: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
-                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 48, fontWeight: 800, color: riskColor(aiResult.riskLevel), letterSpacing: -2 }}>{aiResult.riskScore}</div>
-                  <div><div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700 }}>Risk Score</div><Badge label={aiResult.riskLevel + " risk"} color={riskColor(aiResult.riskLevel)} bg={riskBg(aiResult.riskLevel)} /></div>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 48, fontWeight: 800, color: riskColor(scoreToRisk(aiResult.riskScore)), letterSpacing: -2 }}>{aiResult.riskScore}</div>
+                  <div><div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700 }}>Credit Score</div><Badge label={scoreToRisk(aiResult.riskScore) + " risk"} color={riskColor(scoreToRisk(aiResult.riskScore))} bg={riskBg(scoreToRisk(aiResult.riskScore))} /></div>
                   <div style={{ marginLeft: "auto", textAlign: "right" }}>
                     <div style={{ fontSize: 11, color: T.muted, marginBottom: 3 }}>Recommendation</div>
-                    <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700, textTransform: "capitalize", color: aiResult.recommendation === "approve" ? T.teal : aiResult.recommendation === "decline" ? T.red : T.amber }}>{aiResult.recommendation}</div>
+                    <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700, textTransform: "capitalize", color: scoreToRec(aiResult.riskScore) === "approve" ? T.teal : scoreToRec(aiResult.riskScore) === "decline" ? T.red : T.amber }}>{scoreToRec(aiResult.riskScore)}</div>
                   </div>
                 </div>
                 <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.6, marginBottom: 14 }}>{aiResult.summary}</p>
@@ -512,7 +514,7 @@ const RiskView = ({ deals, selectedDeal }) => {
     setLoading(true);
     setAiAnalysis(null);
     try {
-      const raw = await callClaude([{ role: "user", content: `Analyse this loan for risk. Return JSON only:\n{"riskScore":number,"riskLevel":"low"|"medium"|"high","summary":"2 sentences","positives":["up to 3"],"concerns":["up to 4"],"recommendation":"approve"|"review"|"decline","confidence":number,"nextSteps":["1-3 steps"]}\nDeal: ${deal.company} | ${deal.type} | AUD ${deal.amount.toLocaleString()} | ${deal.industry}\nNotes: ${deal.notes}` }], "Financial risk analyst AI. Return only valid JSON.");
+      const raw = await callClaude([{ role: "user", content: `Analyse this loan for risk. Return JSON only:\n{"riskScore":number 0-100 where 100=excellent creditworthiness and 0=very high risk,"summary":"2 sentences","positives":["up to 3"],"concerns":["up to 4"],"nextSteps":["1-3 steps"]}\nDeal: ${deal.company} | ${deal.type} | AUD ${deal.amount.toLocaleString()} | ${deal.industry}\nNotes: ${deal.notes}` }], "Financial risk analyst AI. Return only valid JSON.");
       const result = JSON.parse(raw.replace(/```json|```/g, "").trim());
       setAiAnalysis(result);
     } catch {
@@ -590,7 +592,7 @@ const RiskView = ({ deals, selectedDeal }) => {
                   <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.65, marginBottom: 12 }}>{aiAnalysis.summary}</p>
                   <div style={{ display: "flex", gap: 8 }}>
                     <span style={{ fontSize: 11, color: T.muted }}>Recommendation:</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: "capitalize", color: aiAnalysis.recommendation === "approve" ? T.teal : aiAnalysis.recommendation === "decline" ? T.red : T.amber }}>{aiAnalysis.recommendation}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: "capitalize", color: scoreToRec(aiAnalysis.riskScore) === "approve" ? T.teal : scoreToRec(aiAnalysis.riskScore) === "decline" ? T.red : T.amber }}>{scoreToRec(aiAnalysis.riskScore)}</span>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
