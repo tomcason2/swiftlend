@@ -23,7 +23,6 @@ const T = {
 const FONT_DISPLAY = "'Syne', sans-serif";
 const FONT_BODY = "'DM Sans', sans-serif";
 
-// Format an ISO timestamp or date string as "17 May 2026"
 const fmtDate = (iso) => {
   if (!iso) return "";
   const d = new Date(iso);
@@ -32,8 +31,6 @@ const fmtDate = (iso) => {
 
 const normalizeRow = (row) => {
   const score = row.risk_score ?? null;
-  // Credit-quality scale: 100 = excellent, 0 = very high risk.
-  // Always derive risk label from the score so it can never contradict it.
   const risk =
     score == null ? "medium"
     : score >= 65  ? "low"
@@ -57,19 +54,17 @@ const normalizeRow = (row) => {
   };
 };
 
-// Approximate "this week" filter — Monday 00:00 local to now.
 const isThisWeek = (isoDate) => {
   if (!isoDate) return false;
   const d = new Date(isoDate);
   if (Number.isNaN(d.getTime())) return false;
   const now = new Date();
-  const dayOfWeek = (now.getDay() + 6) % 7; // 0 = Monday
+  const dayOfWeek = (now.getDay() + 6) % 7;
   const monday = new Date(now);
   monday.setHours(0, 0, 0, 0);
   monday.setDate(monday.getDate() - dayOfWeek);
   return d >= monday && d <= now;
 };
-
 
 const LENDERS = [
   { name: "Pepper Money", types: ["Equipment Finance", "Commercial Loan"], risk: ["medium", "high"], maxAmount: 2000000, industries: "all" },
@@ -89,55 +84,22 @@ const statusColor = (s) => ({ approved: T.teal, review: T.amber, flagged: T.red,
 const statusBg = (s) => ({ approved: T.tealDim, review: T.amberDim, flagged: T.redDim, pending: "rgba(255,255,255,0.06)", declined: T.redDim }[s] || "transparent");
 const initials = (name) => name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
 
-// SECURITY WARNING
-// ----------------
-// In development this calls api.anthropic.com directly from the browser,
-// shipping VITE_ANTHROPIC_KEY to every visitor. Anyone can open DevTools
-// and steal that key.
-//
-// For ANY deployed environment, set VITE_CLAUDE_PROXY_URL to the URL of
-// the Supabase Edge Function in supabase/functions/claude-proxy/ and
-// leave VITE_ANTHROPIC_KEY unset. The function adds the key server-side.
 async function callClaude(messages, systemPrompt) {
   const proxyUrl = import.meta.env.VITE_CLAUDE_PROXY_URL;
   const directKey = import.meta.env.VITE_ANTHROPIC_KEY;
-
-  const body = {
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1000,
-    system: systemPrompt,
-    messages,
-  };
-
+  const body = { model: "claude-haiku-4-5-20251001", max_tokens: 1000, system: systemPrompt, messages };
   let res;
   if (proxyUrl) {
-    res = await fetch(proxyUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    res = await fetch(proxyUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   } else {
-    if (!directKey) {
-      throw new Error(
-        "callClaude: neither VITE_CLAUDE_PROXY_URL nor VITE_ANTHROPIC_KEY is set."
-      );
-    }
+    if (!directKey) throw new Error("callClaude: neither VITE_CLAUDE_PROXY_URL nor VITE_ANTHROPIC_KEY is set.");
     res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": directKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": directKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
       body: JSON.stringify(body),
     });
   }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`callClaude: ${res.status} ${res.statusText} ${text}`);
-  }
+  if (!res.ok) { const text = await res.text().catch(() => ""); throw new Error(`callClaude: ${res.status} ${res.statusText} ${text}`); }
   const data = await res.json();
   return data.content?.map((b) => b.text || "").join("") || "";
 }
@@ -146,7 +108,6 @@ const Badge = ({ label, color, bg }) => (
   <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 9px", borderRadius: 5, background: bg, color, textTransform: "capitalize", whiteSpace: "nowrap" }}>{label}</span>
 );
 
-// Helpers — score is a credit-quality score (100 = safest, 0 = riskiest)
 const scoreToRisk = (s) => s >= 65 ? "low" : s >= 35 ? "medium" : "high";
 const scoreToRec  = (s) => s >= 65 ? "approve" : s >= 35 ? "review" : "decline";
 
@@ -225,8 +186,6 @@ const Topbar = ({ title, subtitle }) => (
 
 const DashboardView = ({ deals, setActive, setSelectedDeal }) => {
   const total = deals.reduce((a, d) => a + (Number(d.amount) || 0), 0);
-  // The card label says "Approved This Week" — filter accordingly instead of
-  // counting every approved deal that ever existed.
   const approved = deals.filter(d => d.status === "approved" && isThisWeek(d.submitted)).length;
   const flagged = deals.filter(d => d.status === "flagged" || d.risk === "high").length;
   const pending = deals.filter(d => d.status === "pending").length;
@@ -347,26 +306,67 @@ const PipelineView = ({ deals, setActive, setSelectedDeal }) => {
   );
 };
 
+// ─── Intake form constants ────────────────────────────────────────────────────
+const LOAN_TYPES = ["Equipment Finance", "Commercial Loan", "Working Capital", "Trade Finance", "Asset Finance", "Mortgage", "Car Loan", "Personal Loan"];
+const EMPLOYMENT_STATUSES = ["Full-time employed", "Part-time employed", "Self-employed", "Casual / Contract", "Unemployed", "Retired"];
+const INTAKE_STEPS = ["Loan Details", "Personal", "Assets & Liabilities", "Expenses", "Documents", "Assessment"];
+const BLANK_EMP = { employer: "", role: "", from: "", to: "" };
+const BLANK_FORM = {
+  company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "",
+  fullName: "", dob: "", address: "", employmentStatus: "Full-time employed",
+  employmentHistory: [{ ...BLANK_EMP }, { ...BLANK_EMP }, { ...BLANK_EMP }],
+  propertyValue: "", mortgageBalance: "", carValue: "", carLoanBalance: "", otherAssets: "", creditCardLimits: "",
+  utilities: "", food: "", transport: "", phone: "", entertainment: "", otherExpenses: "",
+  existingLoanBank: "", existingLoanBalance: "", existingLoanOriginal: "", existingLoanRepayments: "",
+};
+
 const IntakeView = ({ setActive, user, onDealSaved }) => {
-  const [form, setForm] = useState({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" });
+  const [form, setForm] = useState({ ...BLANK_FORM });
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [aiResult, setAiResult] = useState(null);
   const [files, setFiles] = useState([]);
+
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const updEmp = (idx, k, v) => setForm(f => {
+    const h = f.employmentHistory.map((e, i) => i === idx ? { ...e, [k]: v } : e);
+    return { ...f, employmentHistory: h };
+  });
+
+  const showLoanCondition = ["Mortgage", "Car Loan", "Personal Loan"].includes(form.type);
+  const loanConditionLabel = form.type === "Mortgage" ? "Mortgage" : form.type === "Car Loan" ? "Car Loan" : "Personal Loan";
+
   const runAI = async () => {
     setLoading(true);
-    setStep(3);
+    setStep(6);
+    const empHistory = form.employmentHistory
+      .filter(e => e.employer)
+      .map((e, i) => `${i + 1}. ${e.employer} — ${e.role || "N/A"} (${e.from || "?"} to ${e.to || "present"})`)
+      .join("; ") || "Not provided";
+    const totalExpenses = [form.utilities, form.food, form.transport, form.phone, form.entertainment, form.otherExpenses]
+      .map(Number).filter(Boolean).reduce((a, b) => a + b, 0);
+    const lines = [
+      `Assess this loan application. Return JSON only, no markdown:`,
+      `{"riskScore":number 0-100 where 100=excellent creditworthiness and 0=very high risk,"summary":"2 sentences","flags":["up to 5 key concerns"]}`,
+      `Applicant: ${form.fullName || form.company} | DOB: ${form.dob || "N/A"} | Address: ${form.address || "N/A"}`,
+      `Employment: ${form.employmentStatus} | History (3yr): ${empHistory}`,
+      `Loan: ${form.type} AUD ${form.amount} | Business: ${form.company} (ABN: ${form.abn || "N/A"}) | Industry: ${form.industry || "N/A"}`,
+      form.notes ? `Notes: ${form.notes}` : "",
+      `Assets — Property: AUD ${form.propertyValue || 0} | Car: AUD ${form.carValue || 0} | Other: AUD ${form.otherAssets || 0}`,
+      `Liabilities — Mortgage: AUD ${form.mortgageBalance || 0} | Car loan: AUD ${form.carLoanBalance || 0} | Credit cards: AUD ${form.creditCardLimits || 0}`,
+      totalExpenses ? `Monthly expenses total: AUD ${totalExpenses}` : "",
+      showLoanCondition && form.existingLoanBank
+        ? `Existing ${loanConditionLabel} — Bank: ${form.existingLoanBank} | Balance: AUD ${form.existingLoanBalance || 0} | Original: AUD ${form.existingLoanOriginal || 0} | Repayments: AUD ${form.existingLoanRepayments || 0}/mo`
+        : "",
+    ].filter(Boolean);
     try {
-      const prompt = `Assess this loan application. Return JSON only, no markdown:\n{"riskScore":number 0-100 where 100=excellent creditworthiness and 0=very high risk,"summary":"2 sentences","flags":["up to 4 key concerns"]}\nCompany: ${form.company}, Industry: ${form.industry}, Type: ${form.type}, Amount: AUD ${form.amount}, Notes: ${form.notes || "None"}`;
-      const raw = await callClaude([{ role: "user", content: prompt }], "You are a financial risk AI. Respond only with valid JSON, no markdown, no backticks.");
-      const result = JSON.parse(raw.replace(/```json|```/g, "").trim());
-      setAiResult(result);
+      const raw = await callClaude([{ role: "user", content: lines.join("\n") }], "You are a financial risk AI. Respond only with valid JSON, no markdown, no backticks.");
+      setAiResult(JSON.parse(raw.replace(/```json|```/g, "").trim()));
     } catch (err) {
-      console.error("[runAI] AI assessment failed:", err);
-      setAiResult({ riskScore: 45, riskLevel: "medium", summary: "Unable to complete AI assessment. Please review manually.", flags: ["Assessment error — manual review required"], recommendation: "review", confidence: 0 });
+      console.error("[runAI]", err);
+      setAiResult({ riskScore: 45, summary: "Unable to complete AI assessment. Please review manually.", flags: ["Assessment error — manual review required"] });
     }
     setLoading(false);
   };
@@ -374,8 +374,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
   const saveDeal = async () => {
     setSaving(true);
     setSaveError(null);
-    console.log("Saving deal, user:", user?.id, "form:", form.company);
-    const { data, error } = await supabase.from("deals").insert({
+    const { error } = await supabase.from("deals").insert({
       user_id: user.id,
       applicant_name: form.company,
       loan_amount: Number(form.amount),
@@ -384,7 +383,6 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       risk_score: aiResult.riskScore,
       abn: form.abn || null,
     }).select();
-    console.log("Insert result:", { data, error });
     if (error) {
       console.error("Supabase insert error:", error);
       setSaveError(error.message);
@@ -396,52 +394,197 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
     setStep(1);
     setAiResult(null);
     setFiles([]);
-    setForm({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" });
+    setForm({ ...BLANK_FORM });
     setActive("pipeline");
   };
 
   const fieldStyle = { width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "10px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", boxSizing: "border-box" };
   const labelStyle = { fontSize: 11, color: T.muted, display: "block", marginBottom: 6, letterSpacing: "0.04em" };
+  const sectionLabel = (text) => (
+    <div style={{ fontSize: 10, color: T.teal, letterSpacing: "0.08em", fontWeight: 600, marginBottom: 4, marginTop: 6 }}>{text}</div>
+  );
+  const navRow = (onBack, onNext, nextLabel = "Continue →", nextDisabled = false) => (
+    <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+      {onBack && <button onClick={onBack} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>Back</button>}
+      <button onClick={onNext} disabled={nextDisabled} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 28px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 14, cursor: nextDisabled ? "not-allowed" : "pointer", opacity: nextDisabled ? 0.5 : 1, display: "flex", alignItems: "center", gap: 8 }}>{nextLabel}</button>
+    </div>
+  );
+
   return (
-    <div style={{ padding: 32, maxWidth: 680 }}>
+    <div style={{ padding: 32, maxWidth: 720 }}>
+      {/* Step progress bar */}
       <div style={{ display: "flex", marginBottom: 32, background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, overflow: "hidden" }}>
-        {["Application details", "Documents", "AI Assessment"].map((s, i) => (
-          <div key={i} style={{ flex: 1, padding: "10px 0", textAlign: "center", fontSize: 12, fontWeight: step === i + 1 ? 500 : 400, background: step === i + 1 ? T.tealDim : "transparent", color: step === i + 1 ? T.teal : T.muted, borderRight: i < 2 ? `0.5px solid ${T.navyBorder}` : "none" }}>
-            <span style={{ marginRight: 6, fontSize: 10, opacity: 0.6 }}>0{i + 1}</span>{s}
+        {INTAKE_STEPS.map((s, i) => (
+          <div key={i} style={{ flex: 1, padding: "9px 4px", textAlign: "center", borderRight: i < INTAKE_STEPS.length - 1 ? `0.5px solid ${T.navyBorder}` : "none", background: step === i + 1 ? T.tealDim : step > i + 1 ? "rgba(0,180,216,0.05)" : "transparent" }}>
+            <div style={{ fontSize: 9, color: step >= i + 1 ? T.teal : T.muted, fontWeight: 600, marginBottom: 2 }}>{i + 1}</div>
+            <div style={{ fontSize: 10, color: step === i + 1 ? T.teal : step > i + 1 ? "rgba(0,180,216,0.6)" : T.muted, fontWeight: step === i + 1 ? 600 : 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", padding: "0 2px" }}>{s}</div>
           </div>
         ))}
       </div>
+
+      {/* Step 1 — Loan Details */}
       {step === 1 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {sectionLabel("LOAN INFORMATION")}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div><label style={labelStyle}>COMPANY NAME</label><input value={form.company} onChange={e => upd("company", e.target.value)} style={fieldStyle} placeholder="e.g. Apex Transport Pty Ltd" /></div>
+            <div><label style={labelStyle}>COMPANY / APPLICANT NAME</label><input value={form.company} onChange={e => upd("company", e.target.value)} style={fieldStyle} placeholder="e.g. Apex Transport Pty Ltd" /></div>
             <div><label style={labelStyle}>ABN</label><input value={form.abn} onChange={e => upd("abn", e.target.value)} style={fieldStyle} placeholder="XX XXX XXX XXX" /></div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div><label style={labelStyle}>FINANCE TYPE</label><select value={form.type} onChange={e => upd("type", e.target.value)} style={{ ...fieldStyle, cursor: "pointer" }}>{["Equipment Finance", "Commercial Loan", "Working Capital", "Trade Finance", "Asset Finance"].map(t => <option key={t}>{t}</option>)}</select></div>
+            <div>
+              <label style={labelStyle}>FINANCE TYPE</label>
+              <select value={form.type} onChange={e => upd("type", e.target.value)} style={{ ...fieldStyle, cursor: "pointer" }}>
+                {LOAN_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
             <div><label style={labelStyle}>AMOUNT (AUD)</label><input value={form.amount} onChange={e => upd("amount", e.target.value)} style={fieldStyle} placeholder="e.g. 250000" type="number" /></div>
           </div>
-          <div><label style={labelStyle}>INDUSTRY</label><select value={form.industry} onChange={e => upd("industry", e.target.value)} style={{ ...fieldStyle, cursor: "pointer" }}><option value="">Select industry…</option>{["Transport", "Construction", "Retail", "Healthcare", "Manufacturing", "Energy", "Hospitality", "Technology", "Agriculture", "Other"].map(i => <option key={i}>{i}</option>)}</select></div>
-          <div><label style={labelStyle}>ADDITIONAL NOTES</label><textarea value={form.notes} onChange={e => upd("notes", e.target.value)} rows={3} style={{ ...fieldStyle, resize: "vertical" }} placeholder="Any context about the applicant…" /></div>
-          <button onClick={() => setStep(2)} disabled={!form.company || !form.amount} style={{ alignSelf: "flex-start", background: T.teal, color: T.navy, border: "none", padding: "11px 28px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 14, cursor: "pointer", opacity: (!form.company || !form.amount) ? 0.5 : 1 }}>Continue →</button>
+          <div>
+            <label style={labelStyle}>INDUSTRY</label>
+            <select value={form.industry} onChange={e => upd("industry", e.target.value)} style={{ ...fieldStyle, cursor: "pointer" }}>
+              <option value="">Select industry…</option>
+              {["Transport", "Construction", "Retail", "Healthcare", "Manufacturing", "Energy", "Hospitality", "Technology", "Agriculture", "Other"].map(i => <option key={i}>{i}</option>)}
+            </select>
+          </div>
+
+          {showLoanCondition && (
+            <>
+              {sectionLabel(`EXISTING ${loanConditionLabel.toUpperCase()} DETAILS`)}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div><label style={labelStyle}>BANK / LENDER</label><input value={form.existingLoanBank} onChange={e => upd("existingLoanBank", e.target.value)} style={fieldStyle} placeholder="e.g. Commonwealth Bank" /></div>
+                <div><label style={labelStyle}>ORIGINAL LOAN AMOUNT (AUD)</label><input value={form.existingLoanOriginal} onChange={e => upd("existingLoanOriginal", e.target.value)} style={fieldStyle} placeholder="e.g. 450000" type="number" /></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div><label style={labelStyle}>CURRENT BALANCE (AUD)</label><input value={form.existingLoanBalance} onChange={e => upd("existingLoanBalance", e.target.value)} style={fieldStyle} placeholder="e.g. 320000" type="number" /></div>
+                <div><label style={labelStyle}>MONTHLY REPAYMENTS (AUD)</label><input value={form.existingLoanRepayments} onChange={e => upd("existingLoanRepayments", e.target.value)} style={fieldStyle} placeholder="e.g. 2100" type="number" /></div>
+              </div>
+            </>
+          )}
+
+          <div><label style={labelStyle}>ADDITIONAL NOTES</label><textarea value={form.notes} onChange={e => upd("notes", e.target.value)} rows={3} style={{ ...fieldStyle, resize: "vertical" }} placeholder="Any context about the applicant or deal…" /></div>
+          {navRow(null, () => setStep(2), "Continue →", !form.company || !form.amount)}
         </div>
       )}
+
+      {/* Step 2 — Personal Details */}
       {step === 2 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {sectionLabel("PERSONAL INFORMATION")}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>FULL NAME</label><input value={form.fullName} onChange={e => upd("fullName", e.target.value)} style={fieldStyle} placeholder="e.g. James Andrew Smith" /></div>
+            <div><label style={labelStyle}>DATE OF BIRTH</label><input value={form.dob} onChange={e => upd("dob", e.target.value)} style={fieldStyle} type="date" /></div>
+          </div>
+          <div><label style={labelStyle}>RESIDENTIAL ADDRESS</label><input value={form.address} onChange={e => upd("address", e.target.value)} style={fieldStyle} placeholder="e.g. 12 Marine Parade, Brisbane QLD 4000" /></div>
+          <div>
+            <label style={labelStyle}>EMPLOYMENT STATUS</label>
+            <select value={form.employmentStatus} onChange={e => upd("employmentStatus", e.target.value)} style={{ ...fieldStyle, cursor: "pointer" }}>
+              {EMPLOYMENT_STATUSES.map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {sectionLabel("3-YEAR EMPLOYMENT HISTORY")}
+          {form.employmentHistory.map((emp, idx) => (
+            <div key={idx} style={{ background: T.navyMid, border: `0.5px solid ${T.navyBorder}`, borderRadius: 10, padding: 16 }}>
+              <div style={{ fontSize: 10, color: T.muted, marginBottom: 12, letterSpacing: "0.06em" }}>
+                {idx === 0 ? "CURRENT / MOST RECENT" : idx === 1 ? "PREVIOUS EMPLOYER" : "EARLIER EMPLOYER"}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div><label style={labelStyle}>EMPLOYER NAME</label><input value={emp.employer} onChange={e => updEmp(idx, "employer", e.target.value)} style={fieldStyle} placeholder="e.g. Qantas Airways" /></div>
+                <div><label style={labelStyle}>JOB TITLE / ROLE</label><input value={emp.role} onChange={e => updEmp(idx, "role", e.target.value)} style={fieldStyle} placeholder="e.g. Senior Engineer" /></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div><label style={labelStyle}>FROM (MM/YYYY)</label><input value={emp.from} onChange={e => updEmp(idx, "from", e.target.value)} style={fieldStyle} placeholder="e.g. 03/2022" /></div>
+                <div><label style={labelStyle}>TO (MM/YYYY OR "PRESENT")</label><input value={emp.to} onChange={e => updEmp(idx, "to", e.target.value)} style={fieldStyle} placeholder={idx === 0 ? "Present" : "e.g. 02/2024"} /></div>
+              </div>
+            </div>
+          ))}
+          {navRow(() => setStep(1), () => setStep(3))}
+        </div>
+      )}
+
+      {/* Step 3 — Assets & Liabilities */}
+      {step === 3 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {sectionLabel("ASSETS")}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>PROPERTY VALUE (AUD)</label><input value={form.propertyValue} onChange={e => upd("propertyValue", e.target.value)} style={fieldStyle} placeholder="e.g. 750000" type="number" /></div>
+            <div><label style={labelStyle}>MORTGAGE BALANCE (AUD)</label><input value={form.mortgageBalance} onChange={e => upd("mortgageBalance", e.target.value)} style={fieldStyle} placeholder="e.g. 420000" type="number" /></div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>CAR VALUE (AUD)</label><input value={form.carValue} onChange={e => upd("carValue", e.target.value)} style={fieldStyle} placeholder="e.g. 35000" type="number" /></div>
+            <div><label style={labelStyle}>CAR LOAN BALANCE (AUD)</label><input value={form.carLoanBalance} onChange={e => upd("carLoanBalance", e.target.value)} style={fieldStyle} placeholder="e.g. 18000" type="number" /></div>
+          </div>
+          {sectionLabel("OTHER")}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>OTHER ASSETS — SHARES, SAVINGS (AUD)</label><input value={form.otherAssets} onChange={e => upd("otherAssets", e.target.value)} style={fieldStyle} placeholder="e.g. 50000" type="number" /></div>
+            <div><label style={labelStyle}>TOTAL CREDIT CARD LIMITS (AUD)</label><input value={form.creditCardLimits} onChange={e => upd("creditCardLimits", e.target.value)} style={fieldStyle} placeholder="e.g. 15000" type="number" /></div>
+          </div>
+          {navRow(() => setStep(2), () => setStep(4))}
+        </div>
+      )}
+
+      {/* Step 4 — Monthly Expenses */}
+      {step === 4 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {sectionLabel("MONTHLY LIVING EXPENSES (AUD)")}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>UTILITIES — ELECTRICITY, GAS, WATER</label><input value={form.utilities} onChange={e => upd("utilities", e.target.value)} style={fieldStyle} placeholder="e.g. 350" type="number" /></div>
+            <div><label style={labelStyle}>FOOD & GROCERIES</label><input value={form.food} onChange={e => upd("food", e.target.value)} style={fieldStyle} placeholder="e.g. 800" type="number" /></div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>TRANSPORT — FUEL, PUBLIC TRANSPORT</label><input value={form.transport} onChange={e => upd("transport", e.target.value)} style={fieldStyle} placeholder="e.g. 300" type="number" /></div>
+            <div><label style={labelStyle}>PHONE & INTERNET</label><input value={form.phone} onChange={e => upd("phone", e.target.value)} style={fieldStyle} placeholder="e.g. 150" type="number" /></div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div><label style={labelStyle}>ENTERTAINMENT & DINING</label><input value={form.entertainment} onChange={e => upd("entertainment", e.target.value)} style={fieldStyle} placeholder="e.g. 400" type="number" /></div>
+            <div><label style={labelStyle}>OTHER — INSURANCE, SUBSCRIPTIONS</label><input value={form.otherExpenses} onChange={e => upd("otherExpenses", e.target.value)} style={fieldStyle} placeholder="e.g. 200" type="number" /></div>
+          </div>
+          {[form.utilities, form.food, form.transport, form.phone, form.entertainment, form.otherExpenses].some(Boolean) && (() => {
+            const total = [form.utilities, form.food, form.transport, form.phone, form.entertainment, form.otherExpenses].map(Number).filter(Boolean).reduce((a, b) => a + b, 0);
+            return (
+              <div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: T.teal }}>Total monthly expenses</span>
+                <span style={{ fontFamily: FONT_DISPLAY, fontSize: 15, fontWeight: 700, color: T.teal }}>{fmt(total)}</span>
+              </div>
+            );
+          })()}
+          {navRow(() => setStep(3), () => setStep(5))}
+        </div>
+      )}
+
+      {/* Step 5 — Documents */}
+      {step === 5 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ background: T.navyLight, border: `1.5px dashed ${T.navyBorder}`, borderRadius: 12, padding: 32, textAlign: "center" }} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); setFiles(f => [...f, ...Array.from(e.dataTransfer.files).map(fl => fl.name)]); }}>
+          <div
+            style={{ background: T.navyLight, border: `1.5px dashed ${T.navyBorder}`, borderRadius: 12, padding: 32, textAlign: "center" }}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); setFiles(f => [...f, ...Array.from(e.dataTransfer.files).map(fl => fl.name)]); }}
+          >
             <i className="ti ti-cloud-upload" style={{ fontSize: 32, color: T.muted, marginBottom: 12, display: "block" }} />
             <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Drag and drop documents here</div>
-            <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Financials, bank statements, tax returns, quotes</div>
-            <label style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, color: T.teal, padding: "8px 18px", borderRadius: 7, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY }}>Browse files<input type="file" multiple style={{ display: "none" }} onChange={e => { const picked = e.target.files; if (!picked || picked.length === 0) return; setFiles(f => [...f, ...Array.from(picked).map(fl => fl.name)]); e.target.value = ""; }} /></label>
+            <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Financials, bank statements, tax returns, payslips, ID</div>
+            <label style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, color: T.teal, padding: "8px 18px", borderRadius: 7, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY }}>
+              Browse files
+              <input type="file" multiple style={{ display: "none" }} onChange={e => { const p = e.target.files; if (!p?.length) return; setFiles(f => [...f, ...Array.from(p).map(fl => fl.name)]); e.target.value = ""; }} />
+            </label>
           </div>
-          {files.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{files.map((f, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8 }}><i className="ti ti-file-text" style={{ color: T.teal, fontSize: 14 }} /><span style={{ fontSize: 12, flex: 1 }}>{f}</span><button onClick={() => setFiles(fs => fs.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14 }}>×</button></div>))}</div>}
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setStep(1)} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>Back</button>
-            <button onClick={runAI} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 28px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 14, cursor: "pointer" }}>Run AI Assessment →</button>
-          </div>
+          {files.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {files.map((f, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8 }}>
+                  <i className="ti ti-file-text" style={{ color: T.teal, fontSize: 14 }} />
+                  <span style={{ fontSize: 12, flex: 1 }}>{f}</span>
+                  <button onClick={() => setFiles(fs => fs.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14 }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {navRow(() => setStep(4), runAI, "Run AI Assessment →")}
         </div>
       )}
-      {step === 3 && (
+
+      {/* Step 6 — AI Assessment */}
+      {step === 6 && (
         <div>
           {loading ? (
             <div style={{ textAlign: "center", padding: "60px 0" }}>
@@ -453,14 +596,19 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
               <div style={{ background: riskBg(scoreToRisk(aiResult.riskScore)), border: `0.5px solid ${riskColor(scoreToRisk(aiResult.riskScore))}33`, borderRadius: 12, padding: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
                   <div style={{ fontFamily: FONT_DISPLAY, fontSize: 48, fontWeight: 800, color: riskColor(scoreToRisk(aiResult.riskScore)), letterSpacing: -2 }}>{aiResult.riskScore}</div>
-                  <div><div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700 }}>Credit Score</div><Badge label={scoreToRisk(aiResult.riskScore) + " risk"} color={riskColor(scoreToRisk(aiResult.riskScore))} bg={riskBg(scoreToRisk(aiResult.riskScore))} /></div>
+                  <div>
+                    <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700 }}>Credit Score</div>
+                    <Badge label={scoreToRisk(aiResult.riskScore) + " risk"} color={riskColor(scoreToRisk(aiResult.riskScore))} bg={riskBg(scoreToRisk(aiResult.riskScore))} />
+                  </div>
                   <div style={{ marginLeft: "auto", textAlign: "right" }}>
                     <div style={{ fontSize: 11, color: T.muted, marginBottom: 3 }}>Recommendation</div>
                     <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 700, textTransform: "capitalize", color: scoreToRec(aiResult.riskScore) === "approve" ? T.teal : scoreToRec(aiResult.riskScore) === "decline" ? T.red : T.amber }}>{scoreToRec(aiResult.riskScore)}</div>
                   </div>
                 </div>
                 <p style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.6, marginBottom: 14 }}>{aiResult.summary}</p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{aiResult.flags?.map((f, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.mutedMid }}>▲ {f}</div>))}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {aiResult.flags?.map((f, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.mutedMid }}>▲ {f}</div>)}
+                </div>
               </div>
               {saveError && (
                 <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: T.red }}>
@@ -468,7 +616,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
                 </div>
               )}
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => { setStep(1); setAiResult(null); setFiles([]); setSaveError(null); setForm({ company: "", abn: "", type: "Equipment Finance", amount: "", industry: "", notes: "" }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
+                <button onClick={() => { setStep(1); setAiResult(null); setFiles([]); setSaveError(null); setForm({ ...BLANK_FORM }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
                 <button onClick={saveDeal} disabled={saving} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1, display: "flex", alignItems: "center", gap: 8 }}>
                   {saving ? <><Spinner /> Saving…</> : "Save & View in Pipeline →"}
                 </button>
@@ -491,8 +639,6 @@ const RiskView = ({ deals, selectedDeal }) => {
   const chatEndRef = useRef(null);
 
   useEffect(() => {
-    // Intentional prop-to-state sync: when the parent picks a different
-    // deal we mirror it locally and wipe stale AI / chat state.
     if (selectedDeal) {
       setDeal(selectedDeal);
       setAiAnalysis(null);
@@ -500,9 +646,7 @@ const RiskView = ({ deals, selectedDeal }) => {
     } else if (!deal && deals.length > 0) {
       setDeal(deals[0]);
     }
-    // `deal` is intentionally excluded — including it would re-run this
-    // effect every time we set the deal locally from the sidebar.
-    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDeal, deals]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory]);
@@ -513,10 +657,9 @@ const RiskView = ({ deals, selectedDeal }) => {
     setAiAnalysis(null);
     try {
       const raw = await callClaude([{ role: "user", content: `Analyse this loan for risk. Return JSON only:\n{"riskScore":number 0-100 where 100=excellent creditworthiness and 0=very high risk,"summary":"2 sentences","positives":["up to 3"],"concerns":["up to 4"],"nextSteps":["1-3 steps"]}\nDeal: ${deal.company} | ${deal.type} | AUD ${deal.amount.toLocaleString()} | ${deal.industry}\nNotes: ${deal.notes}` }], "Financial risk analyst AI. Return only valid JSON.");
-      const result = JSON.parse(raw.replace(/```json|```/g, "").trim());
-      setAiAnalysis(result);
+      setAiAnalysis(JSON.parse(raw.replace(/```json|```/g, "").trim()));
     } catch {
-      setAiAnalysis({ riskScore: deal.riskScore, riskLevel: deal.risk, summary: deal.notes, positives: ["Established business"], concerns: ["Requires further review"], recommendation: "review", confidence: 70, nextSteps: ["Request updated financials"] });
+      setAiAnalysis({ riskScore: deal.riskScore, summary: deal.notes || "No notes.", positives: ["Established business"], concerns: ["Requires further review"], nextSteps: ["Request updated financials"] });
     }
     setLoading(false);
   };
@@ -529,7 +672,7 @@ const RiskView = ({ deals, selectedDeal }) => {
     setChatHistory(newHistory);
     setChatLoading(true);
     try {
-      const reply = await callClaude(newHistory, `You are Swiftlend AI helping a broker. Be concise and professional. Context: ${deal.company}, ${deal.type}, AUD ${deal.amount.toLocaleString()}, risk score ${deal.riskScore}/100, notes: ${deal.notes}`);
+      const reply = await callClaude(newHistory, `You are Swiftlend AI helping a broker. Be concise and professional. Context: ${deal.company}, ${deal.type}, AUD ${deal.amount.toLocaleString()}, credit score ${deal.riskScore}/100, notes: ${deal.notes}`);
       setChatHistory(h => [...h, { role: "assistant", content: reply }]);
     } catch {
       setChatHistory(h => [...h, { role: "assistant", content: "Sorry, I could not process that. Please try again." }]);
@@ -565,7 +708,7 @@ const RiskView = ({ deals, selectedDeal }) => {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
               <div>
                 <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, letterSpacing: -0.5, marginBottom: 4 }}>{deal.company}</div>
-                <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry} · ABN {deal.abn}</div>
+                <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry}{deal.abn ? ` · ABN ${deal.abn}` : ""}</div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <Badge label={deal.status} color={statusColor(deal.status)} bg={statusBg(deal.status)} />
@@ -656,9 +799,8 @@ const LenderMatchView = ({ deals }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // First-load default: pick the first deal once the list arrives.
     if (deals.length > 0 && !deal) setDeal(deals[0]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deals]);
 
   const likelihoodColor = (l) => ({ High: T.teal, Medium: T.amber, Low: T.red }[l] || T.muted);
@@ -675,8 +817,7 @@ const LenderMatchView = ({ deals }) => {
       ).join("\n");
       const prompt = `Analyse this loan deal against the lenders below. Return JSON only, no markdown, no backticks.\n\nDeal: ${deal.company} | Type: ${deal.type} | Amount: AUD ${deal.amount.toLocaleString()} | Industry: ${deal.industry} | Risk: ${deal.risk} (score ${deal.riskScore}/100) | Notes: ${deal.notes}\n\nLenders:\n${lenderSummary}\n\nReturn this exact JSON structure:\n{"matches":[{"lenderName":"...","matchScore":85,"reason":"one sentence why they match","likelihood":"High"},{"lenderName":"...","matchScore":70,"reason":"one sentence","likelihood":"Medium"},{"lenderName":"...","matchScore":55,"reason":"one sentence","likelihood":"Low"}],"ruledOut":[{"lenderName":"...","reason":"one sentence why ruled out"}]}\n\nPut the top 3 best-fit lenders in matches ranked by matchScore. All remaining lenders go in ruledOut.`;
       const raw = await callClaude([{ role: "user", content: prompt }], "You are a commercial lending specialist. Analyse deal-lender compatibility and return only valid JSON, no markdown.");
-      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
-      setResult(parsed);
+      setResult(JSON.parse(raw.replace(/```json|```/g, "").trim()));
     } catch {
       setError("AI matching failed. Please try again.");
     }
@@ -698,21 +839,11 @@ const LenderMatchView = ({ deals }) => {
       <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 24 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 11, color: T.muted, marginBottom: 6, letterSpacing: "0.04em" }}>SELECT DEAL</div>
-          <select
-            value={deal?.id || ""}
-            onChange={e => { setDeal(deals.find(d => d.id === e.target.value)); setResult(null); setError(null); }}
-            style={{ width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "10px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", cursor: "pointer" }}
-          >
-            {deals.map(d => (
-              <option key={d.id} value={d.id}>{d.company} — {d.type} — {fmt(d.amount)}</option>
-            ))}
+          <select value={deal?.id || ""} onChange={e => { setDeal(deals.find(d => d.id === e.target.value)); setResult(null); setError(null); }} style={{ width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "10px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", cursor: "pointer" }}>
+            {deals.map(d => <option key={d.id} value={d.id}>{d.company} — {d.type} — {fmt(d.amount)}</option>)}
           </select>
         </div>
-        <button
-          onClick={runMatch}
-          disabled={loading || !deal}
-          style={{ display: "flex", alignItems: "center", gap: 8, background: T.teal, color: T.navy, border: "none", padding: "11px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1, whiteSpace: "nowrap" }}
-        >
+        <button onClick={runMatch} disabled={loading || !deal} style={{ display: "flex", alignItems: "center", gap: 8, background: T.teal, color: T.navy, border: "none", padding: "11px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1, whiteSpace: "nowrap" }}>
           {loading ? <><Spinner /> Matching…</> : <><i className="ti ti-building-bank" style={{ fontSize: 15 }} /> Find Lenders</>}
         </button>
       </div>
@@ -725,23 +856,15 @@ const LenderMatchView = ({ deals }) => {
             <div style={{ fontSize: 12, color: T.muted }}>{deal.type} · {deal.industry} · {fmt(deal.amount)}</div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 10, color: T.muted, marginBottom: 2, letterSpacing: "0.04em" }}>RISK SCORE</div>
+            <div style={{ fontSize: 10, color: T.muted, marginBottom: 2, letterSpacing: "0.04em" }}>CREDIT SCORE</div>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 800, color: riskColor(deal.risk) }}>{deal.riskScore}/100</div>
           </div>
           <Badge label={deal.risk + " risk"} color={riskColor(deal.risk)} bg={riskBg(deal.risk)} />
         </div>
       )}
 
-      {loading && (
-        <div style={{ textAlign: "center", padding: "60px 0" }}>
-          <Spinner />
-          <div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Swiftlend AI is analysing lender compatibility…</div>
-        </div>
-      )}
-
-      {error && !loading && (
-        <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 10, padding: "14px 18px", color: T.red, fontSize: 13 }}>{error}</div>
-      )}
+      {loading && <div style={{ textAlign: "center", padding: "60px 0" }}><Spinner /><div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Swiftlend AI is analysing lender compatibility…</div></div>}
+      {error && !loading && <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 10, padding: "14px 18px", color: T.red, fontSize: 13 }}>{error}</div>}
 
       {result && !loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -767,14 +890,11 @@ const LenderMatchView = ({ deals }) => {
                   <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2, marginBottom: 14 }}>
                     <div style={{ height: "100%", width: `${m.matchScore}%`, background: likelihoodColor(m.likelihood), borderRadius: 2, transition: "width 0.8s ease" }} />
                   </div>
-                  <button style={{ background: T.teal, color: T.navy, border: "none", padding: "8px 20px", borderRadius: 7, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
-                    Submit to Lender →
-                  </button>
+                  <button style={{ background: T.teal, color: T.navy, border: "none", padding: "8px 20px", borderRadius: 7, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Submit to Lender →</button>
                 </div>
               ))}
             </div>
           </div>
-
           {result.ruledOut?.length > 0 && (
             <div>
               <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.muted }}>Why not matched</div>
@@ -806,26 +926,8 @@ const LenderMatchView = ({ deals }) => {
 const buildAuditEntries = (deals) => {
   const entries = [];
   deals.forEach(d => {
-    entries.push({
-      id: `${d.id}-submit`,
-      action: "Application submitted",
-      company: d.company,
-      user: d.analyst,
-      time: d.submitted,
-      createdAt: d.createdAt,
-      note: `${d.type} · ${fmt(d.amount)} · Credit score ${d.riskScore}/100`,
-      dotColor: T.teal,
-    });
-    entries.push({
-      id: `${d.id}-ai`,
-      action: "AI credit assessment completed",
-      company: d.company,
-      user: "Swiftlend AI",
-      time: d.submitted,
-      createdAt: d.createdAt,
-      note: `Credit score ${d.riskScore}/100 — Recommendation: ${scoreToRec(d.riskScore)}`,
-      dotColor: T.teal,
-    });
+    entries.push({ id: `${d.id}-submit`, action: "Application submitted", company: d.company, user: d.analyst, time: d.submitted, createdAt: d.createdAt, note: `${d.type} · ${fmt(d.amount)} · Credit score ${d.riskScore}/100`, dotColor: T.teal });
+    entries.push({ id: `${d.id}-ai`, action: "AI credit assessment completed", company: d.company, user: "Swiftlend AI", time: d.submitted, createdAt: d.createdAt, note: `Credit score ${d.riskScore}/100 — Recommendation: ${scoreToRec(d.riskScore)}`, dotColor: T.teal });
     if (d.status !== "pending") {
       const actionLabel = { approved: "Status changed to Approved", declined: "Status changed to Declined", review: "Sent for manual review", flagged: "Flagged for high risk" }[d.status];
       const dotColor = { approved: T.teal, declined: T.red, review: T.amber, flagged: T.red }[d.status] || T.muted;
@@ -923,30 +1025,18 @@ const LoginView = ({ onLogin }) => {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const switchMode = (next) => {
-    setMode(next);
-    setError("");
-    setMessage("");
-    setPassword("");
-    setConfirmPassword("");
-  };
+  const switchMode = (next) => { setMode(next); setError(""); setMessage(""); setPassword(""); setConfirmPassword(""); };
 
   const handleSignIn = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (authError) {
-      setError(authError.message);
-      setLoading(false);
-      return;
-    }
+    if (authError) { setError(authError.message); setLoading(false); return; }
     const sbUser = data.user;
     const displayName = sbUser.user_metadata?.full_name || sbUser.email.split("@")[0];
     const words = displayName.trim().split(" ");
-    const userInitials = words.length >= 2
-      ? (words[0][0] + words[words.length - 1][0]).toUpperCase()
-      : displayName.slice(0, 2).toUpperCase();
+    const userInitials = words.length >= 2 ? (words[0][0] + words[words.length - 1][0]).toUpperCase() : displayName.slice(0, 2).toUpperCase();
     onLogin({ email: sbUser.email, name: displayName, role: sbUser.user_metadata?.role || "Broker", initials: userInitials, id: sbUser.id });
     setLoading(false);
   };
@@ -958,12 +1048,7 @@ const LoginView = ({ onLogin }) => {
     if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
     setLoading(true);
     const { error: authError } = await supabase.auth.signUp({ email: email.trim(), password });
-    if (authError) {
-      setError(authError.message);
-    } else {
-      setMessage("Account created. Check your email to confirm before signing in.");
-      setMode("signin");
-    }
+    if (authError) { setError(authError.message); } else { setMessage("Account created. Check your email to confirm before signing in."); setMode("signin"); }
     setLoading(false);
   };
 
@@ -973,133 +1058,59 @@ const LoginView = ({ onLogin }) => {
     const trimmed = email.trim();
     if (!trimmed) { setError("Enter an email address first."); return; }
     setLoading(true);
-    const { error: authError } = await supabase.auth.resetPasswordForEmail(trimmed, {
-      redirectTo: window.location.origin,
-    });
-    if (authError) {
-      setError(authError.message);
-    } else {
-      setMessage("Password reset email sent. Check your inbox.");
-    }
+    const { error: authError } = await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo: window.location.origin });
+    if (authError) { setError(authError.message); } else { setMessage("Password reset email sent. Check your inbox."); }
     setLoading(false);
   };
 
-  const fieldStyle = {
-    width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8,
-    padding: "11px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", boxSizing: "border-box",
-  };
+  const fieldStyle = { width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "11px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", boxSizing: "border-box" };
   const labelStyle = { fontSize: 11, color: T.muted, display: "block", marginBottom: 7, letterSpacing: "0.05em" };
-
-  const headings = {
-    signin: { title: "Welcome back", sub: "Sign in to your broker portal" },
-    signup: { title: "Create account", sub: "Get started with Swiftlend" },
-    reset:  { title: "Reset password", sub: "We'll send a reset link to your email" },
-  };
+  const headings = { signin: { title: "Welcome back", sub: "Sign in to your broker portal" }, signup: { title: "Create account", sub: "Get started with Swiftlend" }, reset: { title: "Reset password", sub: "We'll send a reset link to your email" } };
 
   return (
     <div style={{ minHeight: "100vh", background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_BODY, position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,180,216,0.13) 0%, transparent 70%)", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(0,180,216,0.15), transparent)" }} />
-
       <div style={{ width: "100%", maxWidth: 420, padding: "0 24px", position: "relative", zIndex: 1 }}>
         <div style={{ textAlign: "center", marginBottom: 44 }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 36, letterSpacing: -1.5, marginBottom: 10 }}>
-            Swift<span style={{ color: T.teal }}>lend</span>
-          </div>
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 36, letterSpacing: -1.5, marginBottom: 10 }}>Swift<span style={{ color: T.teal }}>lend</span></div>
           <div style={{ fontSize: 11, color: T.muted, letterSpacing: "0.12em" }}>AI CREDIT PLATFORM</div>
           <div style={{ width: 40, height: 2, background: `linear-gradient(90deg, transparent, ${T.teal}, transparent)`, margin: "16px auto 0" }} />
         </div>
-
         <div style={{ background: T.navyMid, border: `0.5px solid ${T.navyBorder}`, borderRadius: 16, padding: "36px 32px", boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}>
           <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 700, marginBottom: 4 }}>{headings[mode].title}</div>
           <div style={{ fontSize: 13, color: T.muted, marginBottom: 32 }}>{headings[mode].sub}</div>
-
-          {message && (
-            <div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: T.teal, marginBottom: 20 }}>
-              {message}
-            </div>
-          )}
-
+          {message && <div style={{ background: T.tealDim, border: `0.5px solid ${T.tealBorder}`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: T.teal, marginBottom: 20 }}>{message}</div>}
           <form onSubmit={mode === "signin" ? handleSignIn : mode === "signup" ? handleSignUp : handleReset} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <div>
               <label style={labelStyle}>EMAIL ADDRESS</label>
-              <input
-                type="email" value={email} onChange={e => setEmail(e.target.value)}
-                placeholder="you@swiftlend.com.au" required autoFocus
-                style={fieldStyle}
-                onFocus={e => e.target.style.borderColor = T.teal}
-                onBlur={e => e.target.style.borderColor = T.navyBorder}
-              />
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@swiftlend.com.au" required autoFocus style={fieldStyle} onFocus={e => e.target.style.borderColor = T.teal} onBlur={e => e.target.style.borderColor = T.navyBorder} />
             </div>
-
             {mode !== "reset" && (
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
                   <label style={{ ...labelStyle, marginBottom: 0 }}>PASSWORD</label>
-                  {mode === "signin" && (
-                    <button type="button" onClick={() => switchMode("reset")} style={{ background: "none", border: "none", color: T.teal, fontSize: 11, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>
-                      Forgot password?
-                    </button>
-                  )}
+                  {mode === "signin" && <button type="button" onClick={() => switchMode("reset")} style={{ background: "none", border: "none", color: T.teal, fontSize: 11, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>Forgot password?</button>}
                 </div>
-                <input
-                  type="password" value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••••" required minLength={6}
-                  style={fieldStyle}
-                  onFocus={e => e.target.style.borderColor = T.teal}
-                  onBlur={e => e.target.style.borderColor = T.navyBorder}
-                />
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••••" required minLength={6} style={fieldStyle} onFocus={e => e.target.style.borderColor = T.teal} onBlur={e => e.target.style.borderColor = T.navyBorder} />
               </div>
             )}
-
             {mode === "signup" && (
               <div>
                 <label style={labelStyle}>CONFIRM PASSWORD</label>
-                <input
-                  type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="••••••••••" required minLength={6}
-                  style={fieldStyle}
-                  onFocus={e => e.target.style.borderColor = T.teal}
-                  onBlur={e => e.target.style.borderColor = T.navyBorder}
-                />
+                <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="••••••••••" required minLength={6} style={fieldStyle} onFocus={e => e.target.style.borderColor = T.teal} onBlur={e => e.target.style.borderColor = T.navyBorder} />
               </div>
             )}
-
-            {error && (
-              <div style={{ background: "rgba(255,107,107,0.1)", border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: T.red }}>
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit" disabled={loading}
-              style={{ width: "100%", background: T.teal, color: T.navy, border: "none", borderRadius: 8, padding: "13px 0", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.8 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 }}
-            >
-              {loading ? <><Spinner /> {mode === "signin" ? "Signing in…" : mode === "signup" ? "Creating account…" : "Sending reset email…"}</> :
-                mode === "signin" ? "Sign in →" : mode === "signup" ? "Create account →" : "Send reset email →"}
+            {error && <div style={{ background: "rgba(255,107,107,0.1)", border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: T.red }}>{error}</div>}
+            <button type="submit" disabled={loading} style={{ width: "100%", background: T.teal, color: T.navy, border: "none", borderRadius: 8, padding: "13px 0", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.8 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 }}>
+              {loading ? <><Spinner /> {mode === "signin" ? "Signing in…" : mode === "signup" ? "Creating account…" : "Sending reset email…"}</> : mode === "signin" ? "Sign in →" : mode === "signup" ? "Create account →" : "Send reset email →"}
             </button>
           </form>
-
           <div style={{ marginTop: 24, paddingTop: 20, borderTop: `0.5px solid ${T.navyBorder}`, textAlign: "center" }}>
-            {mode === "signin" && (
-              <span style={{ fontSize: 13, color: T.muted }}>
-                Don't have an account?{" "}
-                <button type="button" onClick={() => switchMode("signup")} style={{ background: "none", border: "none", color: T.teal, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0, fontWeight: 500 }}>
-                  Create account
-                </button>
-              </span>
-            )}
-            {(mode === "signup" || mode === "reset") && (
-              <button type="button" onClick={() => switchMode("signin")} style={{ background: "none", border: "none", color: T.muted, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>
-                ← Back to sign in
-              </button>
-            )}
+            {mode === "signin" && <span style={{ fontSize: 13, color: T.muted }}>Don't have an account?{" "}<button type="button" onClick={() => switchMode("signup")} style={{ background: "none", border: "none", color: T.teal, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0, fontWeight: 500 }}>Create account</button></span>}
+            {(mode === "signup" || mode === "reset") && <button type="button" onClick={() => switchMode("signin")} style={{ background: "none", border: "none", color: T.muted, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>← Back to sign in</button>}
           </div>
         </div>
-
-        <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(255,255,255,0.2)" }}>
-          Swiftlend · AI-powered commercial lending · Australia
-        </div>
+        <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(255,255,255,0.2)" }}>Swiftlend · AI-powered commercial lending · Australia</div>
       </div>
     </div>
   );
@@ -1115,28 +1126,17 @@ export default function App() {
   const buildUser = (sbUser) => {
     const displayName = sbUser.user_metadata?.full_name || sbUser.email.split("@")[0];
     const words = displayName.trim().split(" ");
-    const userInitials = words.length >= 2
-      ? (words[0][0] + words[words.length - 1][0]).toUpperCase()
-      : displayName.slice(0, 2).toUpperCase();
+    const userInitials = words.length >= 2 ? (words[0][0] + words[words.length - 1][0]).toUpperCase() : displayName.slice(0, 2).toUpperCase();
     return { email: sbUser.email, name: displayName, role: sbUser.user_metadata?.role || "Broker", initials: userInitials, id: sbUser.id };
   };
 
   const fetchDeals = async (userId, userName) => {
     if (!userId) return;
-    const { data, error } = await supabase
-      .from("deals")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-    if (error) {
-      console.error("[fetchDeals] Supabase error:", error);
-      return;
-    }
+    const { data, error } = await supabase.from("deals").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+    if (error) { console.error("[fetchDeals] Supabase error:", error); return; }
     if (data) setDeals(data.map(row => ({ ...normalizeRow(row), analyst: row.analyst || userName || "Unassigned" })));
   };
 
-  // Track the last user id we hydrated for, so token refreshes don't
-  // trigger redundant re-fetches every ~hour.
   const lastUserIdRef = useRef(null);
 
   useEffect(() => {
@@ -1153,8 +1153,6 @@ export default function App() {
       if (session?.user) {
         const u = buildUser(session.user);
         setUser(u);
-        // Only refetch when the user actually changed (sign-in / switch),
-        // not on every TOKEN_REFRESHED event.
         if (lastUserIdRef.current !== u.id) {
           lastUserIdRef.current = u.id;
           fetchDeals(u.id, u.name);
@@ -1202,8 +1200,6 @@ export default function App() {
 
   return (
     <>
-      {/* Fonts (Syne + DM Sans) are loaded via <link> in index.html — faster
-          and non-blocking. Tabler Icons is loaded the same way. */}
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1215,9 +1211,7 @@ export default function App() {
         select option { background: #0D2640; }
       `}</style>
       {authLoading ? (
-        <div style={{ minHeight: "100vh", background: T.navy, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Spinner />
-        </div>
+        <div style={{ minHeight: "100vh", background: T.navy, display: "flex", alignItems: "center", justifyContent: "center" }}><Spinner /></div>
       ) : !user ? (
         <LoginView onLogin={setUser} />
       ) : (
