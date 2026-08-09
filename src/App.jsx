@@ -87,19 +87,26 @@ const initials = (name) => name.split(" ").slice(0, 2).map(w => w[0]).join("").t
 async function callClaude(messages, systemPrompt) {
   const proxyUrl = import.meta.env.VITE_CLAUDE_PROXY_URL;
   const directKey = import.meta.env.VITE_ANTHROPIC_KEY;
+  console.log("[callClaude] config — proxyUrl:", proxyUrl || "(not set)", "| directKey:", directKey ? `set (${directKey.length} chars)` : "(not set)");
   const body = { model: "claude-haiku-4-5-20251001", max_tokens: 1000, system: systemPrompt, messages };
   let res;
   if (proxyUrl) {
+    console.log("[callClaude] using proxy:", proxyUrl);
     res = await fetch(proxyUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   } else {
-    if (!directKey) throw new Error("callClaude: neither VITE_CLAUDE_PROXY_URL nor VITE_ANTHROPIC_KEY is set.");
+    if (!directKey) throw new Error("VITE_ANTHROPIC_KEY is not set. Add it to your .env file (see .env.example).");
+    console.log("[callClaude] calling Anthropic API directly");
     res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": directKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
       body: JSON.stringify(body),
     });
   }
-  if (!res.ok) { const text = await res.text().catch(() => ""); throw new Error(`callClaude: ${res.status} ${res.statusText} ${text}`); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("[callClaude] HTTP error", res.status, res.statusText, text);
+    throw new Error(`Anthropic API error ${res.status} ${res.statusText}: ${text}`);
+  }
   const data = await res.json();
   return data.content?.map((b) => b.text || "").join("") || "";
 }
@@ -327,6 +334,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [aiResult, setAiResult] = useState(null);
+  const [aiError, setAiError] = useState(null);
   const [files, setFiles] = useState([]);
 
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -340,6 +348,8 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
 
   const runAI = async () => {
     setLoading(true);
+    setAiError(null);
+    setAiResult(null);
     setStep(6);
     const empHistory = form.employmentHistory
       .filter(e => e.employer)
@@ -365,8 +375,8 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
       const raw = await callClaude([{ role: "user", content: lines.join("\n") }], "You are a financial risk AI. Respond only with valid JSON, no markdown, no backticks.");
       setAiResult(JSON.parse(raw.replace(/```json|```/g, "").trim()));
     } catch (err) {
-      console.error("[runAI]", err);
-      setAiResult({ riskScore: 45, summary: "Unable to complete AI assessment. Please review manually.", flags: ["Assessment error — manual review required"] });
+      console.error("[runAI] AI assessment failed:", err);
+      setAiError(err.message || "Unknown error");
     }
     setLoading(false);
   };
@@ -591,6 +601,18 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
               <Spinner />
               <div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Lendaro AI is analysing the application…</div>
             </div>
+          ) : aiError ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 12, padding: 20 }}>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, fontWeight: 700, color: T.red, marginBottom: 10 }}>AI assessment failed</div>
+                <div style={{ fontSize: 13, color: T.mutedMid, lineHeight: 1.6, fontFamily: "monospace", wordBreak: "break-word" }}>{aiError}</div>
+                <div style={{ fontSize: 12, color: T.muted, marginTop: 10 }}>Check the browser console (F12 → Console) for full details.</div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => { setStep(1); setAiError(null); setFiles([]); setSaveError(null); setForm({ ...BLANK_FORM }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
+                <button onClick={runAI} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Retry Assessment →</button>
+              </div>
+            </div>
           ) : aiResult && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: riskBg(scoreToRisk(aiResult.riskScore)), border: `0.5px solid ${riskColor(scoreToRisk(aiResult.riskScore))}33`, borderRadius: 12, padding: 20 }}>
@@ -616,7 +638,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
                 </div>
               )}
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => { setStep(1); setAiResult(null); setFiles([]); setSaveError(null); setForm({ ...BLANK_FORM }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
+                <button onClick={() => { setStep(1); setAiResult(null); setAiError(null); setFiles([]); setSaveError(null); setForm({ ...BLANK_FORM }); }} style={{ background: "transparent", border: `0.5px solid ${T.navyBorder}`, color: T.muted, padding: "10px 20px", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13, cursor: "pointer" }}>New Application</button>
                 <button onClick={saveDeal} disabled={saving} style={{ background: T.teal, color: T.navy, border: "none", padding: "10px 24px", borderRadius: 8, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1, display: "flex", alignItems: "center", gap: 8 }}>
                   {saving ? <><Spinner /> Saving…</> : "Save & View in Pipeline →"}
                 </button>
