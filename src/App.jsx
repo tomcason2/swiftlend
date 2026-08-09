@@ -143,7 +143,7 @@ const NAV = [
 const Sidebar = ({ active, setActive, user, onSignOut }) => (
   <div style={{ width: 220, background: T.navyMid, borderRight: `0.5px solid ${T.navyBorder}`, display: "flex", flexDirection: "column", flexShrink: 0, height: "100vh", position: "sticky", top: 0 }}>
     <div style={{ padding: "20px 20px 16px", borderBottom: `0.5px solid ${T.navyBorder}` }}>
-      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 18, letterSpacing: -0.5 }}>Swift<span style={{ color: T.teal }}>lend</span></div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 18, letterSpacing: -0.5 }}>Len<span style={{ color: T.teal }}>daro</span></div>
       <div style={{ fontSize: 10, color: T.muted, marginTop: 2, letterSpacing: "0.06em" }}>AI CREDIT PLATFORM</div>
     </div>
     <nav style={{ flex: 1, padding: "12px 10px", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -589,7 +589,7 @@ const IntakeView = ({ setActive, user, onDealSaved }) => {
           {loading ? (
             <div style={{ textAlign: "center", padding: "60px 0" }}>
               <Spinner />
-              <div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Swiftlend AI is analysing the application…</div>
+              <div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Lendaro AI is analysing the application…</div>
             </div>
           ) : aiResult && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -672,7 +672,7 @@ const RiskView = ({ deals, selectedDeal }) => {
     setChatHistory(newHistory);
     setChatLoading(true);
     try {
-      const reply = await callClaude(newHistory, `You are Swiftlend AI helping a broker. Be concise and professional. Context: ${deal.company}, ${deal.type}, AUD ${deal.amount.toLocaleString()}, credit score ${deal.riskScore}/100, notes: ${deal.notes}`);
+      const reply = await callClaude(newHistory, `You are Lendaro AI helping a broker. Be concise and professional. Context: ${deal.company}, ${deal.type}, AUD ${deal.amount.toLocaleString()}, credit score ${deal.riskScore}/100, notes: ${deal.notes}`);
       setChatHistory(h => [...h, { role: "assistant", content: reply }]);
     } catch {
       setChatHistory(h => [...h, { role: "assistant", content: "Sorry, I could not process that. Please try again." }]);
@@ -768,7 +768,7 @@ const RiskView = ({ deals, selectedDeal }) => {
           <div style={{ borderLeft: `0.5px solid ${T.navyBorder}`, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "14px 16px", borderBottom: `0.5px solid ${T.navyBorder}`, display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ width: 24, height: 24, borderRadius: 6, background: T.tealDim, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: T.teal }}>🤖</div>
-              <div><div style={{ fontSize: 12, fontWeight: 600 }}>Swiftlend AI</div><div style={{ fontSize: 10, color: T.teal }}>Online</div></div>
+              <div><div style={{ fontSize: 12, fontWeight: 600 }}>Lendaro AI</div><div style={{ fontSize: 10, color: T.teal }}>Online</div></div>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 10px", display: "flex", flexDirection: "column", gap: 10, minHeight: 200 }}>
               {chatHistory.length === 0 && <div style={{ fontSize: 12, color: T.muted, textAlign: "center", padding: "20px 0" }}>Ask me anything about this deal.</div>}
@@ -863,7 +863,7 @@ const LenderMatchView = ({ deals }) => {
         </div>
       )}
 
-      {loading && <div style={{ textAlign: "center", padding: "60px 0" }}><Spinner /><div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Swiftlend AI is analysing lender compatibility…</div></div>}
+      {loading && <div style={{ textAlign: "center", padding: "60px 0" }}><Spinner /><div style={{ marginTop: 16, fontSize: 14, color: T.muted }}>Lendaro AI is analysing lender compatibility…</div></div>}
       {error && !loading && <div style={{ background: T.redDim, border: `0.5px solid rgba(255,107,107,0.3)`, borderRadius: 10, padding: "14px 18px", color: T.red, fontSize: 13 }}>{error}</div>}
 
       {result && !loading && (
@@ -927,7 +927,7 @@ const buildAuditEntries = (deals) => {
   const entries = [];
   deals.forEach(d => {
     entries.push({ id: `${d.id}-submit`, action: "Application submitted", company: d.company, user: d.analyst, time: d.submitted, createdAt: d.createdAt, note: `${d.type} · ${fmt(d.amount)} · Credit score ${d.riskScore}/100`, dotColor: T.teal });
-    entries.push({ id: `${d.id}-ai`, action: "AI credit assessment completed", company: d.company, user: "Swiftlend AI", time: d.submitted, createdAt: d.createdAt, note: `Credit score ${d.riskScore}/100 — Recommendation: ${scoreToRec(d.riskScore)}`, dotColor: T.teal });
+    entries.push({ id: `${d.id}-ai`, action: "AI credit assessment completed", company: d.company, user: "Lendaro AI", time: d.submitted, createdAt: d.createdAt, note: `Credit score ${d.riskScore}/100 — Recommendation: ${scoreToRec(d.riskScore)}`, dotColor: T.teal });
     if (d.status !== "pending") {
       const actionLabel = { approved: "Status changed to Approved", declined: "Status changed to Declined", review: "Sent for manual review", flagged: "Flagged for high risk" }[d.status];
       const dotColor = { approved: T.teal, declined: T.red, review: T.amber, flagged: T.red }[d.status] || T.muted;
@@ -1002,8 +1002,8 @@ const AdminView = () => (
       <div style={{ background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 12, padding: 20 }}>
         <div style={{ fontFamily: FONT_DISPLAY, fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Team members</div>
         {[
-          { name: "Thomas Cason", role: "Broker", email: "thomas@swiftlend.com.au" },
-          { name: "James L.", role: "Analyst", email: "james.l@swiftlend.com.au" },
+          { name: "Thomas Cason", role: "Broker", email: "thomas@lendaro.com.au" },
+          { name: "James L.", role: "Analyst", email: "james.l@lendaro.com.au" },
         ].map(u => (
           <div key={u.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `0.5px solid ${T.navyBorder}` }}>
             <div style={{ width: 30, height: 30, borderRadius: "50%", background: T.tealDim, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: T.teal }}>{initials(u.name)}</div>
@@ -1065,14 +1065,14 @@ const LoginView = ({ onLogin }) => {
 
   const fieldStyle = { width: "100%", background: T.navyLight, border: `0.5px solid ${T.navyBorder}`, borderRadius: 8, padding: "11px 14px", color: T.white, fontSize: 13, fontFamily: FONT_BODY, outline: "none", boxSizing: "border-box" };
   const labelStyle = { fontSize: 11, color: T.muted, display: "block", marginBottom: 7, letterSpacing: "0.05em" };
-  const headings = { signin: { title: "Welcome back", sub: "Sign in to your broker portal" }, signup: { title: "Create account", sub: "Get started with Swiftlend" }, reset: { title: "Reset password", sub: "We'll send a reset link to your email" } };
+  const headings = { signin: { title: "Welcome back", sub: "Sign in to your broker portal" }, signup: { title: "Create account", sub: "Get started with Lendaro" }, reset: { title: "Reset password", sub: "We'll send a reset link to your email" } };
 
   return (
     <div style={{ minHeight: "100vh", background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_BODY, position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,180,216,0.13) 0%, transparent 70%)", pointerEvents: "none" }} />
       <div style={{ width: "100%", maxWidth: 420, padding: "0 24px", position: "relative", zIndex: 1 }}>
         <div style={{ textAlign: "center", marginBottom: 44 }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 36, letterSpacing: -1.5, marginBottom: 10 }}>Swift<span style={{ color: T.teal }}>lend</span></div>
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 36, letterSpacing: -1.5, marginBottom: 10 }}>Len<span style={{ color: T.teal }}>daro</span></div>
           <div style={{ fontSize: 11, color: T.muted, letterSpacing: "0.12em" }}>AI CREDIT PLATFORM</div>
           <div style={{ width: 40, height: 2, background: `linear-gradient(90deg, transparent, ${T.teal}, transparent)`, margin: "16px auto 0" }} />
         </div>
@@ -1083,7 +1083,7 @@ const LoginView = ({ onLogin }) => {
           <form onSubmit={mode === "signin" ? handleSignIn : mode === "signup" ? handleSignUp : handleReset} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <div>
               <label style={labelStyle}>EMAIL ADDRESS</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@swiftlend.com.au" required autoFocus style={fieldStyle} onFocus={e => e.target.style.borderColor = T.teal} onBlur={e => e.target.style.borderColor = T.navyBorder} />
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@lendaro.com.au" required autoFocus style={fieldStyle} onFocus={e => e.target.style.borderColor = T.teal} onBlur={e => e.target.style.borderColor = T.navyBorder} />
             </div>
             {mode !== "reset" && (
               <div>
@@ -1110,7 +1110,7 @@ const LoginView = ({ onLogin }) => {
             {(mode === "signup" || mode === "reset") && <button type="button" onClick={() => switchMode("signin")} style={{ background: "none", border: "none", color: T.muted, fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, padding: 0 }}>← Back to sign in</button>}
           </div>
         </div>
-        <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(255,255,255,0.2)" }}>Swiftlend · AI-powered commercial lending · Australia</div>
+        <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(255,255,255,0.2)" }}>Lendaro · AI-powered commercial lending · Australia</div>
       </div>
     </div>
   );
@@ -1175,7 +1175,7 @@ export default function App() {
   };
 
   const PAGE_TITLES = {
-    dashboard: ["Dashboard", `Good morning, ${user?.name || ""} — welcome to Swiftlend`],
+    dashboard: ["Dashboard", `Good morning, ${user?.name || ""} — welcome to Lendaro`],
     pipeline: ["Deal Pipeline", `${deals.length} active application${deals.length !== 1 ? "s" : ""}`],
     intake: ["New Application", "Submit and AI-assess a new finance application"],
     risk: ["Risk Review", "AI-powered deal assessment with live chat"],
@@ -1183,7 +1183,7 @@ export default function App() {
     audit: ["Audit Trail", "Full compliance log of all decisions and AI actions"],
     admin: ["Admin & Billing", "Manage your plan, team, and account settings"],
   };
-  const [title, subtitle] = PAGE_TITLES[active] || ["Swiftlend", ""];
+  const [title, subtitle] = PAGE_TITLES[active] || ["Lendaro", ""];
 
   const renderView = () => {
     switch (active) {
